@@ -178,8 +178,8 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
   
   # Rename
   setnames(estres, measures, sprintf("%s_est", measures))
-  names(cires) <- gsub(".97%", "_high", names(cires), fixed = T)
-  names(cires) <- gsub(".2%", "_low", names(cires), fixed = T)
+  names(cires) <- gsub("\\.97.*\\%", "_high", names(cires))
+  names(cires) <- gsub("\\.2.*\\%", "_low", names(cires))
 
   # Merge estimates and CIs
   periodres <- merge(estres, cires)
@@ -221,8 +221,8 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
     
     # Rename
     setnames(estres, measures, sprintf("%s_est", measures))
-    names(cires) <- gsub(".97%", "_high", names(cires), fixed = T)
-    names(cires) <- gsub(".2%", "_low", names(cires), fixed = T)
+    names(cires) <- gsub("\\.97.*\\%", "_high", names(cires))
+    names(cires) <- gsub("\\.2.*\\%", "_low", names(cires))
     
     # Merge estimates and CIs
     levelres <- merge(estres, cires)

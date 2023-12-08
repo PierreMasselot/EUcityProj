@@ -33,6 +33,7 @@ library(scico) # For accessible color palettes
 library(giscoR) # For Europe map
 library(scales) # For color scale fine tuning
 library(flextable) # To create tables
+library(ggdist) # To visualise distributions
 
 #----- Custom functions
 source("bc_isimip3.R") # ISIMIP3 bias-correction method

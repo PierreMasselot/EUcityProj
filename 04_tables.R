@@ -8,7 +8,9 @@
 if(length(ls()) == 0){
   source("01_pkg_params.R")
   source("02_prep_data.R")
-  finalres <- readRDS("temp/fullresults_2023-12-01.RDS")
+  finalres <- readRDS("temp/fullresults_2023-12-08.RDS")
+  finalres <- lapply(finalres, rename_with, ~ gsub(".2.5%", "_low", .x, fixed = T))
+  finalres <- lapply(finalres, rename_with, ~ gsub(".97.5%", "_high", .x, fixed = T))
 }
 
 #--------------------------
