@@ -59,7 +59,7 @@ varper <- c(10, 75, 90)
 predper <- c(seq(0, 1, 0.1), 2:98, seq(99, 100, 0.1))
 
 # NUMBER OF ITERATIONS IN THE MONTE-CARLO SIMULATIONS AND PARALLELIZATION CORES
-nsim <- 100
+nsim <- 1000
 ncores <- pmax(detectCores() - 2, 1)
 
 # DENOMINATOR FOR RATES
@@ -117,6 +117,7 @@ gcmlist <- setdiff(gcmavail, gcmexcl)
 
 # SSP
 ssplabs <- c("1" = "SSP1-RCP2.6", "2" = "SSP2-RCP4.5", "3" = "SSP3-RCP7.0")
+ssppal <- scico(length(ssplist), palette = "glasgow", direction = -1)
 
 # Warming levels
 levellabs <- sprintf("%s C", targets) 

@@ -142,5 +142,3 @@ projdata[, URAU_CODE := factor(URAU_CODE, citylevs)]
 # Load European map data
 euromap <- gisco_get_countries(year = "2020")
 
-# Remove big temporary objects
-rm(projdeath, projpop, citycal, proj)

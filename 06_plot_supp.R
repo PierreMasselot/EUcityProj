@@ -2,71 +2,41 @@
 # Supplementary plots
 ################################################################################
 
-
 #-------------------------------
-# Age structure of deaths
+# Description of projections
 #-------------------------------
 
-#----- Select data
+#----- Calibration
 
-# Select age groups and clim only scenario for european wide
-plotage <- finalres$eu_period[agegroup != "all" & sc == "full" &
-    ssp %in% ssplist & gcm == "ens" & range == "tot",]
+# Compute difference between calibrated and raw
+diffdat <- finalres$calibration[, diff := tas - cal]
 
-# Compute proportion by age
-plotage[, death_struct := an_est / sum(an_est), 
-  by = .(period, sc, ssp)]
-
-# Compute proportions
-# plotage <- merge(plotage, projdata[, .(pop = sum(pop)), by = .(ssp, year5)],
-#   by.x = c("period", "ssp"), by.y = c("year5", "ssp"))
-# plotage[, rate_totpop := byrate * an_est / pop, by = .(period, sc, ssp)]
-plotage[, an_prop := 100 * an_est / sum(an_est), by = .(period, sc, ssp)]
-
-#----- Build plot
-
-# Plot layout and theme
-figlayout <- ggplot(plotage) +
-  theme_classic() + 
-  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
-    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+# Plot by summary and GCM
+ggplot(diffdat) + 
+  theme_classic() +
+  theme(panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
     panel.border = element_rect(fill = NA), 
     panel.background = element_rect(fill = NA),
-    panel.ontop = T,
-    strip.text = element_text(face = "bold"),
     axis.title = element_text(face = "bold"),
-    strip.background = element_rect(colour = NA, fill = NA)) + 
+    axis.text.x = element_text(angle = -45, vjust = 1, hjust = 0)) +
+  geom_boxplot(aes(fill = summary, y = diff, x = gcm, 
+    group = interaction(gcm, summary)), outlier.size = .1,
+    size = .1) + 
   geom_hline(yintercept = 0) + 
-  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
-  labs(x = "Year", y = "Proporion of excess deaths") + 
-  coord_cartesian(expand = F, clip = "off", xlim = range(plotage$period)) +
-  scale_x_continuous(breaks = seq(2020, 2100, by = 20))
-
-# Add age structure
-# figage <- figlayout + 
-#   geom_area(aes(x = period, y = an_est, fill = agegroup)) + 
-#   scale_fill_manual(values = agepal)
-
-# Add age structure
-figage <- figlayout + 
-  geom_area(aes(x = period, y = an_prop, fill = agegroup)) + 
-  scale_fill_manual(values = agepal, name = "Age group")
+  scale_fill_manual(values = frename(rngpal, tot = mean), 
+    name = "Temperature range",
+    labels = c(cold = "Cold", heat = "Heat", mean = "Centre")) +
+  labs(x = "", y = "RMSE decrease")
 
 # Save
-ggsave("figures/Fig_age.pdf", figage, width = 10, height = 5)
+ggsave("figures/calibration.pdf")
 
-#-------------------------------
-# GCM projections
-#-------------------------------
+#----- GCM projections
 
-#----- Compute projections mean
-
-# Compute Eu mean by 5 years
+# Compute EU mean by 5 years
 tsumeu <- finalres$tsum[summary == "mean",] |> 
   mutate(year5 = floor(year / 5) * 5)
 tsumeu <- tsumeu[, .(tmean = mean(cal)), by = .(year5, ssp, gcm)]
-
-#----- Plot
 
 # Plot layout and theme
 figgcm <- ggplot(tsumeu) +
@@ -90,31 +60,20 @@ figgcm <- figgcm +
 # Save plot
 ggsave("figures/Fig_GCMtmean.pdf", figgcm, width = 10)
 
-#-------------------------------
-# GCM distribution at targets and periods
-#-------------------------------
 
-#----- prepare data
+#----- GCM distribution at levels and periods
 
-# Compute 20 years moving average
-rolltsum <- finalres$tsum[summary == "mean", 
-  .(tmean = mean(cal)), by = .(year, ssp, gcm)]
-rolltsum <- rolltsum[, 
-  .(tmean = frollmean(tmean, 21, align = "center"), year = year), 
-  by = .(ssp, gcm)]
+# Compute average tmean for each warming level
+tsumlevel <- merge(finalres$tsum[summary == "mean",], warming_win, 
+  by = c("gcm", "year", "ssp"), all.x = T, allow.cartesian = T)
+tsumlevel <- tsumlevel[, .(tmean = mean(cal)), by = .(level, ssp, gcm)]
+tsumlevel <- na.omit(tsumlevel)
 
-# Add info about warming level years
-rolltsum <- merge(rolltsum, warming_years, allow.cartesian = T, all = T) |>
-  mutate(level = factor(level, levels = targets), 
-    period = floor(year / 5) * 5)
+# Limit of the plot
+ylim <- range(c(tsumlevel$tmean, tsumeu$tmean), na.rm = T)
 
-# Limit
-ylim <- range(rolltsum$tmean, na.rm = T)
-
-#----- Plot
-
-# Plot layout
-plotlayout <- ggplot(rolltsum) +
+# Plot distribution for periods
+figperiod <- ggplot(tsumeu) +
   theme_classic() + 
   theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
     panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
@@ -124,38 +83,40 @@ plotlayout <- ggplot(rolltsum) +
     axis.title = element_text(face = "bold"),
     strip.background = element_rect(colour = NA, fill = NA)) + 
   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs), ncol = 1) + 
-  labs(y = "Annual mean temperature") + 
-  coord_cartesian(ylim = ylim)
-
-# Distribution for periods
-figper <- plotlayout + 
-  stat_interval(aes(x = period, y = tmean), .width = c(.5, .8, .95, 1), 
-    data = na.omit(rolltsum[,-"level"])) + 
+  labs(y = "Mean temperature") + 
+  coord_cartesian(ylim = ylim) +
+  stat_interval(aes(x = year5, y = tmean), .width = c(.5, .8, .95, 1)) + 
   scale_color_discrete(type = scico(4, palette = "batlow", direction = -1), 
     labels = function(x) paste0(as.numeric(x)*100, "%"),
-    name = "Level") +
+    name = "") +
   labs(x = "Period")
-
-# Distribution for levels
-figlev <- plotlayout + 
+  
+# Plot distribution for levels
+figlevel <- ggplot(tsumlevel) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs), ncol = 1) + 
+  labs(y = "Mean temperature") + 
+  coord_cartesian(ylim = ylim) +
   stat_interval(aes(x = level, y = tmean), .width = c(.5, .8, .95, 1)) + 
   scale_color_discrete(type = scico(4, palette = "batlow", direction = -1), 
     labels = function(x) paste0(as.numeric(x)*100, "%"),
-    name = "Level") +
-  scale_x_discrete(limits = factor(targets, levels = targets)) + 
-  labs(x = "Warming level", y = "")
+    name = "") +
+  labs(x = "Warming level")
 
 # Put together
-figall <- figper + figlev + plot_layout(guides = "collect")
+figall <- figperiod + figlevel + plot_layout(guides = "collect")
 
 # Save
 ggsave("figures/fig_GCMdist.pdf", figall, height = 7)
 
-#-------------------------------
-# Average warming by city
-#-------------------------------
-
-#----- Extract cities warming
+#----- Average warming by city
 
 # Extract calibrated series (last 5y period)
 citytsum <- mutate(finalres$tsum, year5 = floor(year / 5) * 5) |>
@@ -167,34 +128,28 @@ citytsum <- mutate(finalres$tsum, year5 = floor(year / 5) * 5) |>
 
 # Compute difference of period averages for each city
 citytsum <- citytsum[order(year5), .(tmean = mean(tmean, na.rm = T)), 
-    by = .(city, year5, ssp)]
+  by = .(city, year5, ssp)]
 citytsum <- citytsum[, .(tmean = diff(tmean)), by = .(city, ssp)]
 
 # Add city info for mapping
 citytsum <- merge(citytsum, cities[,c("URAU_CODE", "lon", "lat", "pop")],
   by.x = "city", by.y = "URAU_CODE")
 
-#----- Create maps
-
-# Theme and layout
-citywarmfig <- ggplot(subset(citytsum, ssp == 3)) + theme_void() +
+# Plot
+citywarmfig <- ggplot(citytsum) + 
+  theme_void() +
   theme(legend.position = "bottom", legend.box = "vertical",
     strip.text.x = element_text(hjust = 0.5, face = "bold", size = 14), 
     title = element_text(hjust = 0, face = "bold", size = 12),
     panel.background = element_rect(fill = "#cae9f5"),
-    panel.border = element_rect(colour = 1, fill = NA))
-
-# European map layout
-citywarmfig <- citywarmfig + 
+    panel.border = element_rect(colour = 1, fill = NA)) + 
+  facet_wrap(. ~ ssp, labeller = labeller(ssp = ssplabs)) + 
   geom_sf(data = euromap, fill = grey(.9), inherit.aes = F) +
   coord_sf(xlim = range(citytsum$lon), ylim = range(citytsum$lat),
-    lims_method = "box", crs = st_crs(euromap), default_crs = st_crs(4326))
-
-# Add cities
-citywarmfig <- citywarmfig +
+    lims_method = "box", crs = st_crs(euromap), default_crs = st_crs(4326)) +
   geom_point(aes(x = lon, y = lat, fill = tmean, size = pop), 
     shape = 21, stroke = .01) +
-  scale_fill_scico(palette = "bilbao", direction = -1) +
+  scale_fill_scico(palette = "lipari", direction = -1) +
   scale_size(range = c(1, 10), breaks = c(0.1, 0.5, 3, 7.5) * 10^6,
     labels = ~ number(./10^6)) +
   labs(size = "Population (in millions)",
@@ -204,11 +159,252 @@ citywarmfig <- citywarmfig +
 # Save
 ggsave("figures/fig_cityWarm.pdf", citywarmfig, width = 10)
 
+
+#----- GCMs reaching each warming level
+
+# Compute the proportion of GCMs reaching each warming level
+propreach <- subset(warming_years, gcm %in% gcmlist) |>
+  summarise(reach =sum(!is.na(year)), .by = c("ssp", "level"))
+
+# Plot
+ggplot(propreach, aes(x = level, y = reach, group = ssp, col = factor(ssp))) + 
+  theme_classic() + 
+  theme(panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    axis.title = element_text(face = "bold")) + 
+  geom_line(size = 1) + 
+  geom_point(size = 4) + 
+  scale_color_manual(values = ssppal, name = "", labels = ssplabs) + 
+  labs(x = "Warming level", y = "Number of GCMs")
+
+# Save
+ggsave("figures/fig_GCMlevels.pdf", width = 10)
+
+
 #-------------------------------
-# Results by GCM
+# Demographic projections
 #-------------------------------
 
-#----- Select data
+# Country palette ordred like regions
+names(cntrpal) <- summarise(cities, lat = mean(lat), 
+    .by = c("CNTR_CODE", "region")) |>
+  mutate(region = factor(region, levels = ordreg)) |>
+  arrange(region, desc(lat)) |>
+  pull(CNTR_CODE)
+
+#----- Population projections
+
+# Compute population change
+popsum <- proj[, .(pop = sum(wittpop)), by = .(CNTR_CODE, ssp, year5)]
+popchange <- popsum[, .(year5, pop = 100 * (pop - pop[year5 == min(year5)]) / 
+    pop[year5 == min(year5)]), by = .(CNTR_CODE, ssp)]
+
+# Compute the total for EU
+popeu <- popsum[, .(pop = sum(pop)), by = .(ssp, year5)][,
+  .(year5, pop = 100 * (pop - pop[year5 == min(year5)]) / 
+      pop[year5 == min(year5)]), by = ssp]
+
+# Plot layout
+plotlayout <- ggplot(popchange) + 
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = -45, vjust = 1, hjust = 0),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  labs(x = "", y = "Population change (%)") + 
+  geom_hline(yintercept = 0) + 
+  scale_color_manual(values = ssppal, name = "", labels = ssplabs)
+
+# Plot by country
+plotcntr <- plotlayout +
+  geom_line(aes(x = year5, y = pop, group = factor(ssp), col = factor(ssp)),
+    size = 1) + 
+  facet_wrap(~ CNTR_CODE, labeller = labeller(ssp = ssplabs)) 
+  
+# Plot full Europe
+ploteu <- plotlayout + 
+  geom_line(aes(x = year5, y = pop, group = factor(ssp), col = factor(ssp)),
+    size = 1, data = popeu) +
+  labs(title = "European level")
+
+# Put together
+design <- "
+  111
+  222
+  222
+"
+ploteu / plotcntr + plot_layout(guides = "collect", design = design)
+
+# Save
+ggsave("figures/Fig_Popproj.pdf", height = 10)
+
+#----- Population structure
+
+# Compute population structure
+# popstruct <- proj[, popprop := 100 * wittpop / sum(wittpop), 
+#   by = .(CNTR_CODE, ssp, year5)]
+
+# Compute population structure for EU
+eustruct <- proj[, .(pop = sum(wittpop)), by = .(agegroup, ssp, year5)]
+eustruct[, popprop := 100 * pop / sum(pop), by = .(ssp, year5)]
+
+# Plot
+ggplot(eustruct) + 
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.5), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA),
+    panel.ontop = T,
+    axis.text.x = element_text(angle = -45, vjust = 1, hjust = 0)) + 
+  labs(x = "", y = "Population structure (%)") + 
+  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs))  + 
+  geom_area(aes(x = year5, y = popprop, fill = agegroup)) +
+  scale_fill_manual(values = agepal, name = "Age group") + 
+  coord_cartesian(expand = F)
+
+# Save
+ggsave("figures/Fig_Structproj.pdf")
+
+#----- Death rate projections
+
+# Compute population change
+drsum <- proj[, .(pop = sum(wittpop), death = sum(wittdeath)), 
+  by = .(CNTR_CODE, ssp, year5)]
+drsum[, dr := death / pop]
+drchange <- drsum[, .(year5, dr = 100 * (dr - dr[year5 == min(year5)]) / 
+    dr[year5 == min(year5)]), by = .(CNTR_CODE, ssp)]
+
+# Compute the total for EU
+dreu <- drsum[, .(pop = sum(pop), death = sum(death)), by = .(ssp, year5)]
+dreu[, dr := death / pop]
+dreu <- dreu[,.(year5, dr = 100 * (dr - dr[year5 == min(year5)]) / 
+      dr[year5 == min(year5)]), by = ssp]
+
+# Plot layout
+plotlayout <- ggplot(drchange) + 
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = -45, vjust = 1, hjust = 0),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  labs(x = "", y = "Death rate change (%)") + 
+  geom_hline(yintercept = 0) + 
+  scale_color_manual(values = ssppal, name = "", labels = ssplabs)
+
+# Plot by country
+plotcntr <- plotlayout +
+  geom_line(aes(x = year5, y = dr, group = factor(ssp), col = factor(ssp)),
+    size = 1) + 
+  facet_wrap(~ CNTR_CODE, labeller = labeller(ssp = ssplabs)) 
+
+# Plot full Europe
+ploteu <- plotlayout + 
+  geom_line(aes(x = year5, y = dr, group = factor(ssp), col = factor(ssp)),
+    size = 1, data = dreu) +
+  labs(title = "European level")
+
+# Put together
+design <- "
+  111
+  222
+  222
+"
+ploteu / plotcntr + plot_layout(guides = "collect", design = design)
+
+# Save
+ggsave("figures/Fig_DRproj.pdf", height = 10)
+
+
+#-------------------------------
+# Additional results
+#-------------------------------
+
+#----- Decomposition of AN
+
+# Extract detail of total deaths
+plotan <- finalres$eu_period[agegroup == "all" & range != "tot" &
+    sc %in% c("full-demo", "demo") & ssp %in% ssplist & gcm == "ens",]
+
+# Create interaction for aesthetic
+plotan[, group := factor(interaction(range, sc),
+  levels = c("heat.full-demo", "heat.demo", "cold.demo", "cold.full-demo"),
+  labels = c("Climate change - Heat", "Baseline - Heat", 
+    "Baseline - Cold", "Climate change - Cold"))]
+
+# Create aesthetic
+pal <- scico(n = 9, palette = "berlin")[c(1, 3, 6, 8)]
+names(pal) <- c("Baseline - Cold", "Climate change - Cold", 
+  "Climate change - Heat", "Baseline - Heat")
+
+# Scaling factor for numbers
+byan <- 1000
+
+# Plot areas
+ggplot(plotan) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA),
+    legend.position = "bottom") + 
+  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
+  labs(x = "", y = sprintf("Excess deaths (x%s)", 
+    formatC(byan, format = "f", digits = 0, big.mark = ","))) + 
+  coord_cartesian(clip = "off") + 
+  geom_area(aes(x = period, y = an_est / byan, group = group, fill = group)) +
+  scale_fill_manual(values = pal, labels = nms, name = "", 
+    breaks = c("Climate change - Cold", "Climate change - Heat", 
+      "Baseline - Cold", "Baseline - Heat"),
+    guide = guide_legend(ncol = 2, byrow = T)) + 
+  geom_hline(yintercept = 0)
+
+# Export
+ggsave("figures/Fig_TotalExcess.pdf", width = 12, height = 7)
+
+
+#----- Results by age
+
+# Select age groups and clim only scenario for european wide
+plotage <- finalres$eu_period[agegroup != "all" & sc == "full-demo" &
+    ssp %in% ssplist & gcm == "ens" & range == "tot",]
+
+# Plot
+ggplot(plotage) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  facet_wrap(~ agegroup, scales = "free_y") + 
+  labs(x = "Year", y = sprintf("Excess death rate (x%s)", 
+    formatC(byrate, format = "f", digits = 0, big.mark = ","))) +
+  geom_line(aes(x = period, y = rate_est * byrate, col = factor(ssp)),
+    size = 1.5) + 
+  scale_color_manual(values = ssppal, name = "", labels = ssplabs) +
+  geom_hline(yintercept = 0)
+
+# Save
+ggsave("figures/Fig_age.pdf", width = 10, height = 5)
+
+#----- Result by GCM
 
 # Select age groups and clim only scenario for european wide
 plotgcm <- finalres$eu_period[agegroup == "all" & sc == "full-demo" &
@@ -218,10 +414,8 @@ plotgcm <- finalres$eu_period[agegroup == "all" & sc == "full-demo" &
 ratevars <- grep("rate", colnames(plotgcm), value = T)
 plotgcm[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 
-#----- Build plot
-
-# Plot layout and theme
-figlayout <- ggplot(plotgcm) +
+# Build plot
+ggplot(plotgcm) +
   theme_classic() + 
   theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
     panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
@@ -234,126 +428,26 @@ figlayout <- ggplot(plotgcm) +
   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
   labs(x = "Year", y = sprintf("Excess death rate (x%s)", 
     formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
-  coord_cartesian(xlim = range(plotgcm$period), clip = "off") 
-
-# Plot GCM results as lines
-figgcmlines <- figlayout + 
+  coord_cartesian(xlim = range(plotgcm$period), clip = "off") + 
   geom_line(aes(x = period, y = rate_est, col = gcm, linetype = gcm),
-    subset(plotgcm, gcm != "ens")) + 
+    subset(plotgcm, gcm != "ens"), linewidth = 1) + 
   geom_line(aes(x = period, y = rate_est), col = 1, show.legend = F,
     subset(plotgcm, gcm == "ens"), linewidth = 1.5) +
-  scale_color_manual(values = gcmpal, name = "GCM") + 
-  scale_linetype_manual(values = gcmlntp, name = "GCM")
-
-# # Plot GCM results as points
-# figgcmpts <- figlayout + 
-#   geom_point(aes(x = period, y = rate_est, col = gcm), alpha = .3, 
-#     show.legend = F) + 
-#   scale_color_manual(values = gcmpal)  + 
-#   geom_text(aes(y = rate_est, label = gcm, x = max(period) + 5, col = gcm), 
-#     data = plotgcm[period == max(period) & ssp == max(ssplist),], 
-#     alpha = .8, size = 3, hjust = -0, check_overlap = T, show.legend = F, 
-#     nudge_x = 5)
-# 
-# # Plot GCM results as distributions
-# figgcmintervals <- figlayout + 
-#   stat_interval(aes(x = period, y = rate_est), width = perlen, 
-#     .width = c(.5, .8, .9, .95)) + 
-#   scale_color_scico_d(palette = "bamako", direction = -1, 
-#     name = "Interval length")
+  scale_color_manual(values = gcmpal, name = "") + 
+  scale_linetype_manual(values = gcmlntp, name = "")
 
 # Save plot
-ggsave("figures/Fig_GCMline.pdf", figgcmlines, width = 10)
-# ggsave("figures/Fig_GCMpts.pdf", figgcmpts, width = 10)
-# ggsave("figures/Fig_GCMintvls.pdf", figgcmintervals, width = 10)
+ggsave("figures/Fig_GCMresult.pdf", width = 10)
 
-#-------------------------------
-# Difference of deaths between SSP1 and SSP3
-#-------------------------------
 
-#----- Select data
 
-# Select age groups and clim only scenario for european wide
-plotsspdiff <- finalres$eu_period[agegroup == "all" & sc == "full-demo" &
-    gcm != "ens",]
 
-# Difference in ANs between SSPs
-plotsspdiff <- foreach(ssps = iter(combn(ssplist, 2), by = "column"), 
-  .combine = rbind) %do%
-{
-  plotsspdiff[, .(an_est = an_est[ssp == ssps[2]] - an_est[ssp == ssps[1]]), 
-    by = .(period, range, gcm)][, 
-      ssp := paste(sprintf("SSP%s", rev(ssps)), collapse = "-")]
-}
 
-# Aggregate GCMs
-plotsspdiff <- plotsspdiff[, 
-  .(an_est = mean(an_est), an_low = min(an_est), an_high = max(an_est)),
-  by = .(period, range, ssp)]
 
-#----- Build plot
 
-# Plot layout and theme
-figlayout <- ggplot(plotsspdiff) +
-  theme_classic() + 
-  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
-    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
-    panel.border = element_rect(fill = NA), 
-    strip.text = element_text(face = "bold"),
-    axis.title = element_text(face = "bold"),
-    strip.background = element_rect(colour = NA, fill = NA)) + 
-  geom_hline(yintercept = 0) + 
-  facet_wrap(~ ssp) + 
-  labs(x = "", y = "Excess death difference") + 
-  coord_cartesian(clip = "off")
+### TRENDS FOR COUNTRIES/REGIONS
 
-# Draw trends as lines with ribbon CIs
-trendssp <- figlayout + 
-  geom_ribbon(aes(x = period, ymin = an_low, ymax = an_high, fill = range,
-    group = range), col = NA, alpha = .1) + 
-  geom_line(aes(x = period, y = an_est, group = range, col = range), 
-    linewidth = 1) + 
-  scale_color_manual(values = rngpal, labels = rnglabs, name = "") + 
-  scale_fill_manual(values = rngpal, labels = rnglabs, name = "")
 
-# Save
-ggsave("figures/Fig_SSPdiff.pdf", trendssp, width = 10)
-
-#-------------------------------
-# Warming level windows
-#-------------------------------
-# 
-# #----- Select data
-# 
-# # Select GCMs
-# plotwarms <- subset(warming_years, ssp %in% ssplist & gcm %in% gcmlist)
-# 
-# # Add all possible GCMs as factor levels
-# plotwarms <- mutate(plotwarms, gcm = factor(gcm, levels = gcmlist))
-# 
-# #----- Build plot
-# 
-# # Plot layout and theme
-# figlayout <- ggplot(plotwarms) +
-#   theme_classic() + 
-#   theme(panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
-#     panel.border = element_rect(fill = NA), 
-#     strip.text = element_text(face = "bold", size = 6),
-#     axis.title = element_text(face = "bold")) + 
-#   facet_wrap(gcm ~ ., ncol = 1, drop = F, strip.position = "top") + 
-#   labs(x = "Year", y = "") + 
-#   coord_cartesian(xlim = range(finalres$total$period$period))
-# 
-# # Add windows
-# figwindows <- figlayout + 
-#   geom_segment(aes(y = factor(ssp), yend = factor(ssp), 
-#     x = year - 10, xend = year + 10, col = level), 
-#     arrow = arrow(len = unit(.1, "in"), ends = "both")) + 
-#   geom_point(aes(x = year, y = factor(ssp), col = level)) + 
-#   scale_color_manual(values = levelcol, name = "Level", labels = levellabs)
-# 
-# # Save
-# ggsave("figures/Fig_WarmingLevels.pdf", figwindows, height = 15)
 
 
 
@@ -402,164 +496,5 @@ ggsave("figures/Fig_SSPdiff.pdf", trendssp, width = 10)
 #     yend = rate_high_gcm), linewidth = 20, col = pal[2])
 
 
-#-------------------------------
-# Map of ranks
-#-------------------------------
-
-#----- Select data
-
-# All age group and net effect
-plotrank <- finalres$city_level[agegroup == "all" & sc == "full-demo" & 
-    ssp == 3 & range == "tot",]
-
-# Compute ranks
-plotrank[, rate_rank := 100 * frank(rate_est) / max(frank(rate_est)), 
-  by = level]
-
-# Add geographical info
-plotrank <- merge(plotrank, cities[, c("URAU_CODE", "lon", "lat", "pop")],
-  by.x = "city", by.y = "URAU_CODE")
-
-# Cut points for palette
-plotrank[, colgrp := cut(rate_rank, seq(0, 100, by = 10))]
-
-# Palettes (fill and border)
-npal <- length(levels(plotrank$colgrp))
-pal <- scico(npal, palette = "batlowW", direction = -1)
-
-#----- Build rank plot
-# 
-# # Theme and layout
-# rkfig <- ggplot(plotrank) + theme_void() +
-#   theme(legend.position = "bottom", legend.box = "vertical",
-#     strip.text.x = element_text(hjust = 0.5, face = "bold", size = 14), 
-#     title = element_text(hjust = 0, face = "bold", size = 12),
-#     panel.background = element_rect(fill = "#cae9f5"),
-#     panel.border = element_rect(colour = 1, fill = NA)) +
-#   facet_grid(. ~ level, labeller = labeller(level = levellabs))
-# 
-# # European map layout
-# rkfig <- rkfig + 
-#   geom_sf(data = euromap, fill = grey(.9), inherit.aes = F) +
-#   coord_sf(xlim = range(plotrank$lon), ylim = range(plotrank$lat),
-#     lims_method = "box", crs = st_crs(euromap), default_crs = st_crs(4326))
-# 
-# # Add cities
-# rkfig <- rkfig +
-#   geom_point(aes(x = lon, y = lat, fill = colgrp, size = pop), col = 1,
-#     shape = 21, stroke = .01) +
-#   scale_fill_manual(values = pal) +
-#   scale_size(range = c(1, 10), breaks = c(0.1, 0.5, 3, 7.5) * 10^6,
-#     labels = ~ number(./10^6)) +
-#   labs(size = "Population (in millions)",
-#     fill = "Excess death rank (%)") +
-#   guides(size = guide_legend(override.aes = list(col = 1)),
-#     fill = guide_bins(override.aes = list(size = 5), axis = F, 
-#       direction = "horizontal", nrow = 1, label.position = "bottom"))
-# 
-# # Save plot
-# ggsave("figures/Fig_rankMaps.pdf", plot = rkfig, width = 13, height = 10)
-
-#----- Rank progression
-
-# Compute progression
-rankprog <- plotrank[, .(prog = rate_rank[level == 3] - rate_rank[level == 1.5],
-  lon = lon, lat = lat, pop = pop), by = city]
-rankprog[, colgrp := cut(prog, seq(-50, 50, by = 20))]
-
-# Theme and layout
-progfig <- ggplot(rankprog) + theme_void() +
-  theme(legend.position = "bottom", legend.box = "vertical",
-    panel.background = element_rect(fill = "#cae9f5"),
-    panel.border = element_rect(colour = 1, fill = NA))
-
-# European map layout
-progfig <- progfig + 
-  geom_sf(data = euromap, fill = grey(.9), inherit.aes = F) +
-  coord_sf(xlim = range(cities$lon), ylim = range(cities$lat),
-    lims_method = "box", crs = st_crs(euromap), default_crs = st_crs(4326))
-
-# Add cities
-progfig <- progfig +
-  geom_point(aes(x = lon, y = lat, fill = colgrp, size = pop, col = colgrp), 
-    shape = 21, stroke = .01) +
-  scale_color_manual(values = c(rep("white", 2), rep("black", 3)),
-    name = "Rank progression") +
-  scale_fill_scico_d(palette = "vik", name = "Rank progression") +
-  scale_size(range = c(1, 10), breaks = c(0.1, 0.5, 3, 7.5) * 10^6,
-    labels = ~ number(./10^6), name = "Population (in millions)") +
-  guides(size = guide_legend(override.aes = list(col = 1)),
-    colour = guide_bins(override.aes = list(size = 5), axis = F, 
-      direction = "horizontal", nrow = 1, label.position = "bottom"),
-    fill = guide_bins(override.aes = list(size = 5), axis = F, 
-      direction = "horizontal", nrow = 1, label.position = "bottom"))
-
-# Save plot
-ggsave("figures/Fig_rankProgMap.pdf", plot = progfig)
 
 
-#-------------------------------
-# Total numbers
-#-------------------------------
-
-#----- Extract data
-
-# Extract detail of total deaths
-plotan <- finalres$eu_period[agegroup == "all" & range != "tot" &
-    sc %in% c("full-demo", "demo") & ssp %in% ssplist & gcm == "ens",]
-
-# Create interaction for aesthetic
-plotan[, group := factor(interaction(range, sc),
-  levels = c("heat.full-demo", "heat.demo", "cold.demo", "cold.full-demo"))]
-
-# Create aesthetic
-pal <- scico(n = 9, palette = "berlin")[c(1, 3, 6, 8)]
-nms <- c("Baseline - Cold", "Climate change - Cold", "Climate change - Heat", 
-  "Baseline - Heat")
-names(pal) <- names(nms) <- c("cold.demo", "cold.full-demo", "heat.full-demo", 
-  "heat.demo")
-
-# Scaling factor for numbers
-byan <- 1000
-
-# Create dataset for uncertainty range (account for stacking)
-plotci <- arrange(plotan, desc(group)) |> 
-  subset(period == max(period))
-plotci[, ":="(an_low = an_low - an_est + cumsum(an_est), 
-  an_high = an_high - an_est + cumsum(an_est)), by = .(ssp, sign(an_est))]
-
-#----- Build plot
-
-# Plot layout and theme
-figan <- ggplot(plotan) +
-  theme_classic() + 
-  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
-    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
-    panel.border = element_rect(fill = NA), 
-    strip.text = element_text(face = "bold"),
-    axis.title = element_text(face = "bold"),
-    strip.background = element_rect(colour = NA, fill = NA),
-    legend.position = "bottom") + 
-  geom_hline(yintercept = 0) + 
-  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
-  labs(x = "", y = sprintf("Excess deaths (x%s)", 
-    formatC(byan, format = "f", digits = 0, big.mark = ","))) + 
-  coord_cartesian(clip = "off")
-
-# Draw areas
-figan <- figan +
-  geom_area(aes(x = period, y = an_est / byan, group = group, fill = group)) +
-  scale_fill_manual(values = pal, labels = nms, name = "", 
-    breaks = c("cold.full-demo", "heat.full-demo", "cold.demo", "heat.demo"),
-    guide = guide_legend(ncol = 2, byrow = T))
-
-# Add uncertainty for last period
-figan <- figan + 
-  geom_errorbar(aes(x = period + perlen * 2, ymin = an_low / byan, 
-    ymax = an_high / byan, group = group, col = group),
-    data = plotci, position = position_dodge(10), width = 10, linewidth = .5) + 
-  scale_colour_manual(values = pal, labels = nms, name = "", 
-    breaks = c("cold.full-demo", "heat.full-demo", "cold.demo", "heat.demo"))
-
-# Export
-ggsave("figures/Fig_TotalExcess.pdf", figan, width = 12, height = 7)

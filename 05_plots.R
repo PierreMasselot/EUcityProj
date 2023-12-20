@@ -2,12 +2,7 @@
 # Plots
 ################################################################################
 
-if(length(ls()) == 0){
-  source("01_pkg_params.R")
-  source("02_prep_data.R")
-  finalres <- readRDS("temp/fullresults_2023-12-01.RDS")
-}
-  
+
 
 #-------------------------
 # Figure 1: trends
@@ -165,24 +160,29 @@ cntr_info <- group_by(cities, CNTR_CODE) |>
   summarise(cntr_name = cntr_name[1], region = region[1],lat = mean(lat))
 plotcntr <- merge(plotcntr, cntr_info, by.x = "country", by.y = "CNTR_CODE")
 
-# Select regional data
+# Select regional and european level data
 plotreg <- finalres$region_level[agegroup == "all" & sc == "full-demo" &
     ssp == 3,]
+ploteu <- finalres$eu_level[agegroup == "all" & sc == "full-demo" &
+    ssp == 3 & gcm == "ens",]
 
 # Multiply rates by the denominator
 ratevars <- grep("rate", colnames(plotcntr), value = T)
 plotcntr[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 plotreg[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
+ploteu[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 
 # Relevel region to correct order
 plotcntr[, region := factor(region, names(regpal))]
 plotreg[, region := factor(region, names(regpal))]
+ploteu[, region := factor("")]
 
 # Create position variable for forest plot
 setorder(plotcntr, -region, lat)
 plotcntr[, id := .GRP - as.numeric(region) * 2, by = .(country)]
 plotreg <- plotreg[plotcntr[, .(id = min(id) - 1.5), by = region], 
   on = "region"]
+ploteu[, id := min(plotreg$id) - 2]
 poslab <- unique(plotcntr[, c("id", "cntr_name")])
 
 #----- Build forest plot
@@ -194,7 +194,8 @@ figforest <- ggplot(plotcntr) +
     panel.border = element_rect(fill = NA), 
     axis.ticks.y = element_blank(),
     strip.text = element_text(face = "bold", size = 13),
-    strip.background = element_rect(colour = NA, fill = NA)) + 
+    strip.background = element_rect(colour = NA, fill = NA),
+    axis.text.x.bottom = element_text(angle = -45, hjust = 0.5, vjust = 0.1)) + 
   facet_grid(rows = vars(region), cols = vars(level), scales = "free_y", 
     space = "free_y", labeller = labeller(level = levellabs)) +
   geom_hline(aes(yintercept = id + .75), data = plotreg, linewidth = .01) + 
@@ -222,8 +223,15 @@ figforest <- figforest +
     data = subset(plotreg, range == "tot"), shape = 18, size = .9) + 
   geom_vline(xintercept = 0)
 
+# Add European level
+figforest <- figforest + 
+  geom_col(aes(y = id, x = rate_est, fill = range), orientation = "y",
+    data = subset(ploteu, range != "tot"), width = .9, alpha = .5) +
+  geom_pointrange(aes(y = id, x = rate_est, xmin = rate_low, xmax = rate_high),
+    data = subset(ploteu, range == "tot"), shape = 18, size = .9)
+
 # Save
-ggsave("figures/Fig2_countries.pdf", figforest, height = 8, width = 10)
+ggsave("figures/Fig2_countries.pdf", figforest, height = 8, width = 15)
 
 
 #----- Build points plot

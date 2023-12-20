@@ -17,11 +17,68 @@ if(length(ls()) == 0){
 # Some results
 #--------------------------
 
-#----- Cumulative numbers
+#----- Patterns of excess deaths
 
+# Death rates by period
+lapply(1:3, function(i){ finalres$eu_period[agegroup == "all" & 
+    sc == "full-demo" & gcm == "ens" & range == "tot" & ssp == i, 
+  .(period, rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
+    rate_low * byrate, rate_high * byrate))]
+})
+  
+# Total numbers at the end of century
 finalres$eu_period[agegroup == "all" & sc == "full-demo" & 
     gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
-  .(ssp, cuman_est, cuman_low, cuman_high)]
+  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", an_est, an_low, an_high))]
+
+# Cumulative numbers
+finalres$eu_period[agegroup == "all" & sc == "full-demo" & 
+    gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
+  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", cuman_est, cuman_low, 
+    cuman_high))]
+
+# Death rates by warming level
+finalres$eu_level[agegroup == "all" & sc == "full-demo" & gcm == "ens" & 
+    range == "tot" & ssp == 3, 
+  .(level, rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
+      rate_low * byrate, rate_high * byrate),
+    an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", an_est, an_low, an_high))]
+
+#----- Regional level
+
+# Rate results
+finalres$region_level[agegroup == "all" & sc == "full-demo" & 
+    range == "tot" & ssp == 3, 
+  .(region, level, 
+    rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
+    rate_low * byrate, rate_high * byrate))]
+
+
+#----- Country level
+
+countryres <- subset(finalres$country_level, 
+  agegroup == "all" & sc == "full-demo" & range == "tot" & ssp == 3)
+
+# Countries with increase decrease
+countryres[, .N, by = .(level, sign(rate_est))]
+
+# Most and least impacted country
+countryres |> 
+  filter(rate_est == max(rate_est), .by = level) |>
+  mutate(rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", 
+    rate_est * byrate, rate_low * byrate, rate_high * byrate))
+countryres |> 
+  filter(rate_est == min(rate_est), .by = level) |>
+  mutate(rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", 
+    rate_est * byrate, rate_low * byrate, rate_high * byrate))
+
+# Relative increases
+subset(finalres$country_period, 
+    agegroup == "all" & range == "tot" & ssp == 3) |>
+  summarise((rate_est[sc == "full-demo" & period == max(period)] - 
+      rate_est[sc == "full" & period == min(period)]) / 
+      rate_est[sc == "full" & period == min(period)],
+    .by = country)
 
 #----- Attributable fractions
 
@@ -35,12 +92,6 @@ cntraf <- finalres$country_period[agegroup == "all" & sc == "full" &
     range == "tot" & ssp %in% ssplist & period == max(period),
   .(country, ssp, af_est, af_low, af_high)]
 
-#----- Attributable to climate change
-
-finalres$eu_period[agegroup == "all" & gcm == "ens" &
-    range == "tot" & ssp %in% ssplist & period == max(period),
-  .(100 * an_est[sc == "full-demo"] / an_est[sc == "full"]), 
-  by = ssp]
 
 #--------------------------
 # Big table of rates
@@ -49,7 +100,7 @@ finalres$eu_period[agegroup == "all" & gcm == "ens" &
 #----- Parameters
 
 # Selected period
-pertab <- c(2050, 2090)
+pertab <- c(2050, 2095)
 
 # Selected SSP for warming levels
 ssptab <- 3
@@ -91,7 +142,7 @@ bigtabdata <- rbind(bigtabdata, regper, euper)
 
 # Tidy cell values
 bigtabdata <- mutate(bigtabdata, 
-  measure = sprintf("%.1f\n(%.1f \u2013 %.1f)", 
+  measure = sprintf("%.1f\n(%.1f to %.1f)", 
     rate_est * byrate, rate_low * byrate, rate_high * byrate),
   range = rnglabs[range])
 
