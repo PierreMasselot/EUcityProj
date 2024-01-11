@@ -32,10 +32,6 @@ writeLines(c(""), "temp/attr.txt")
 cat(as.character(as.POSIXct(start <- Sys.time())),
   file="temp/attr.txt", append=T)
 
-# Prepare parallel
-cl <- makeCluster(ncores, outfile = "")
-registerDoParallel(cl)
-
 st <- Sys.time()
 
 #----- Iterate on SSPs and cities within countries within regions
@@ -50,12 +46,14 @@ finalres <- foreach(issp = ssplist,
   # Iterate on regions, sum everything and add info about the current SSP
   foreach(reg = unique(cities$region), .combine = combres, 
     .final = function(x) finalcomb(x, geolev = "eu", ensonly = F,
+      write = sprintf("temp/res_eu_%s", reg, issp),
       perlen = perlen, warming_win = warming_win[ssp == issp,]) |> 
       lapply(mutate, ssp = issp) |> _[-1]) %:% 
   # Iterate on countries within the region and sum everything 
   foreach(country = unique(subset(cities, region == reg, CNTR_CODE, drop = T)),
     .combine = combres, 
-    .final = function(x) finalcomb(x, geolev = "region", geoval = reg, 
+    .final = function(x) finalcomb(x, geolev = "region", geoval = reg,
+      write = sprintf("temp/res_region_%s_%s", reg, issp),
       perlen = perlen, warming_win = warming_win[ssp == issp,])) %:%
   # Iterate on cities within the country and sum everything
   foreach(city = subset(cities, CNTR_CODE == country, URAU_CODE, drop = T),
@@ -149,16 +147,23 @@ finalres <- foreach(issp = ssplist,
   
   # Extract demographic projections
   cityproj <- projdata[URAU_CODE == city & ssp == issp, 
-      .(agegroup, year5, pop, death)]
+      .(agegroup, year5, pop, death)] |> 
+    merge(tmeandf[, .(year, year5)], allow.cartesian = T)
+  
+  # Prepare parallel
+  cl <- makeCluster(ncores)
+  registerDoParallel(cl)
 
   #----- Loop on age groups, GCMs and scenarios
-  citysspres <- foreach(a = agelabs, acoef = iter(citycoef, by = "row"), 
+  citysspres <- foreach(a = agelabs, 
+      acoef = iter(citycoef, by = "row"), 
       asim = isplit(citycoefsim, citycoefsim$agegroup),
       aproj = isplit(cityproj, cityproj$agegroup),
       .combine = rbind, .packages = packs) %:% 
-    foreach(gcm = setdiff(gcmlist, gcmexcl), 
+    foreach(sc = c("demo", "full"), gcmprefix = c("cons", "cal"),
       .combine = rbind, .packages = packs) %:%
-    foreach(sc = c("demo", "full"), 
+    foreach(gcm = gcmlist, tseries = iter(tmeandf[, .SD, 
+      .SDcols = sprintf("%s_%s", gcmprefix, gcmlist)], by = "col"),
       .combine = rbind, .packages = packs) %dopar% 
   {
     
@@ -174,13 +179,6 @@ finalres <- foreach(issp = ssplist,
     ind <- tper %between% tper[c("25.0%", "99.0%")]
     mmt <- tper[ind][which.min(drop(bper[ind,] %*% allcoefs[1,]))]
 
-    # Demographic series (constant for 5 years)
-    aproj <- merge(tmeandf[, .(year5)], aproj$value)
-    
-    # Temperature series
-    tseries <- if (sc == "demo") tmeandf[[sprintf("cons_%s", gcm)]] else 
-      tmeandf[[sprintf("cal_%s", gcm)]]
-
     #----- Compute daily AN 
 
     # Create centred basis
@@ -195,25 +193,26 @@ finalres <- foreach(issp = ssplist,
     # COMPUTE THE DAILY CONTRIBUTIONS OF ATTRIBUTABLE DEATHS
     # NB: REMOVE RR<1 AS THIS CAN LEAD TO NEGATIVE DEATHS
     rr <- pmax(exp(drop(bcen %*% t(allcoefs))), 1)
-    an <- drop((1 - 1 / rr) * aproj$death / 365)
+    an <- drop((1 - 1 / rr) * aproj$value$death / 365)
 
     #----- Aggregate by year
 
     # Prepare data to aggregate
     # This includes deaths, pop and tmean that are kept to compute impacts
     colnames(an) <- c("est", sprintf("sim%i", 1:nsim))
-    an <- cbind(tmeandf[,.(year)], heat = indheat, aproj[,.(pop, death)], an)
+    an <- cbind(aproj$value, heat = indheat, an)
 
     # Aggregate by year and temperature range
-    yearan <- an[, c(list(range = c("tot", "heat", "cold"), 
+    an <- an[, c(list(range = c("tot", "heat", "cold"), 
         pop = pop[1], death = sum(death)), 
         lapply(.SD, function(x) c(sum(x), sum(x[heat]), sum(x[!heat])))), 
       by = year, .SDcols = patterns("est|sim")]
     
     # Free some memory and return
-    rm(an); gc()
-    yearan[, ":="(sc = sc, agegroup = a, gcm = gcm)]
+    an[, ":="(sc = sc, agegroup = a, gcm = gcm)]
   }
+  
+  stopCluster(cl)
 
   #----- Compute summaries
   
@@ -247,14 +246,12 @@ finalres <- foreach(issp = ssplist,
   #----- Return
   
   # Free up memory
-  rm(tmeandf, tmeanobs, tmeanproj, tdf_long)
+  rm(tmeandf, tmeanobs, tmeanproj, tdf_long); gc()
   
   # Return results 
   c(list(res = citysspres, tsum = tsum[, city := city], 
     calibration = calscore[, city := city]), cityimpacts)
 }
-
-stopCluster(cl)
 
 #----- European level results
 

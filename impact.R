@@ -24,7 +24,7 @@ combres <- function(x1, x2){
 }
 
 #----- Computing impacts for a specific level
-finalcomb <- function(x, geolev = NULL, geoval = NULL, ...){
+finalcomb <- function(x, geolev = NULL, geoval = NULL, write = NULL, ...){
   
   # Compute impacts for this geographical level
   aggres <- impact(x$res, ...)
@@ -36,7 +36,9 @@ finalcomb <- function(x, geolev = NULL, geoval = NULL, ...){
 
   # Reorganise and return
   names(aggres) <- sprintf("%s_%s", geolev, names(aggres))
-  c(x, aggres)
+  res <- c(x, aggres)
+  if (!is.null(write)) saveRDS(res, file = write)
+  res
 }
 
 #--------------------------------
@@ -79,7 +81,7 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
     
     # Add to the results and clean up
     res <- rbind(res, aggages[, agegroup := "all"])
-    rm(aggages)
+    rm(aggages); gc()
   }
   
   #----- Differences between scenarios
@@ -103,7 +105,7 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
         setNames(ancols), 
       variable.name = "sc")
     res[, sc := scvar[sc]]
-    rm(reswide)
+    rm(reswide); gc()
   }
   
   #----- Compute impact measures
@@ -183,7 +185,7 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
 
   # Merge estimates and CIs
   periodres <- merge(estres, cires)
-  rm(estres, cires)
+  rm(estres, cires); gc()
   
   # Prepare output
   out <- list(period = periodres)

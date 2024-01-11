@@ -14,7 +14,7 @@ if(length(ls()) == 0){
 #------ Prepare data
 
 # Select data to export
-expdata <- finalres$total$period[ssp %in% ssplist & 
+expdata <- finalres$eu_period[ssp %in% ssplist & 
     !grepl("clim", sc) & gcm == "ens" & agegroup == "all",
   .(period, sc, range, ssp, an_est, an_low, an_high, 
     rate_est, rate_low, rate_high)]
