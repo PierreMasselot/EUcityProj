@@ -3,7 +3,6 @@
 ################################################################################
 
 
-
 #-------------------------
 # Figure 1: trends
 #-------------------------
@@ -11,7 +10,7 @@
 #----- Select data
 
 # Select all ages and clim only scenario for european wide
-plottrends <- finalres$eu_period[agegroup == "all" & sc == "full-demo" &
+plottrends <- finalres$eu_period[agegroup == "all" & sc == "clim" &
     ssp %in% ssplist & gcm == "ens",]
 
 # Multiply rates by the denominator
@@ -80,70 +79,6 @@ trendlines <- figlayout +
 # Export
 ggsave("figures/Fig1_EUlevel.pdf", trendlines, width = 12)
 
-# #-------------------------
-# # Figure 2: trends by country and region
-# #-------------------------
-# 
-# #----- Select data
-# 
-# # Select countries, all ages and difference full-demo sub-scenario and net
-# plotcntr <- finalres$country$period[agegroup == "all" & sc == "full-demo" &
-#     range == "tot" & ssp %in% ssplist,]
-# 
-# # Add info about countries
-# cntr_info <- group_by(cities, CNTR_CODE) |> 
-#   summarise(cntr_name = cntr_name[1], region = region[1],lat = mean(lat))
-# plotcntr <- merge(plotcntr, cntr_info)
-# 
-# # Select regional data
-# plotreg <- finalres$region$period[agegroup == "all" & sc == "full-demo" &
-#     range == "tot" & ssp %in% ssplist,]
-# 
-# # Multiply rates by the denominator
-# ratevars <- grep("rate", colnames(plotcntr), value = T)
-# plotcntr[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
-# plotreg[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
-# 
-# #----- Plot parameters
-# 
-# # Data to display country on the right
-# cntrlabs <- plotcntr[period == max(period) & ssp == 3,]
-# 
-# #----- Build plot
-# 
-# # Plot layout and theme
-# figlayout <- ggplot(plotcntr) + 
-#   theme_classic() + 
-#   theme(plot.margin = unit(c(1, 5, 1, 1), "line"), legend.position = "bottom",
-#     panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
-#     panel.border = element_rect(fill = NA), 
-#     strip.text = element_text(face = "bold"),
-#     axis.title = element_text(face = "bold"),
-#     strip.background = element_rect(colour = NA, fill = NA)) + 
-#   geom_hline(yintercept = 0) + 
-#   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) +
-#   labs(x = "", y = sprintf("Excess death rate (x%s)", 
-#     formatC(byrate, format = "f", digits = 0, big.mark = ",")), 
-#     color = "", fill = "") +
-#   coord_cartesian(clip = "off", xlim = range(plotcntr$period))
-# 
-# # Add country level curves
-# figcountry <- figlayout + 
-#   geom_line(aes(x = period, y = rate_est, col = region, group = CNTR_CODE), 
-#     alpha = .3) + 
-#   geom_text(aes(y = rate_est, label = cntr_name, x = max(period) + 5, 
-#       col = region), alpha = .8, size = 3, 
-#     data = plotcntr[period == max(period) & ssp == max(ssplist),], hjust = -0, 
-#     check_overlap = T, show.legend = F, nudge_x = 5)
-#   
-# # Add region level curves
-# figcountry <- figcountry + 
-#   geom_line(aes(x = period, y = rate_est, col = region, group = region), 
-#     data = plotreg, linewidth = rel(1.5)) + 
-#   scale_color_manual(values = regpal)
-# 
-# # Save
-# ggsave("figures/Fig2a_trendcountries.pdf", figcountry, width = 10)
 
 #-------------------------
 # Figure 2 country by target
@@ -152,7 +87,7 @@ ggsave("figures/Fig1_EUlevel.pdf", trendlines, width = 12)
 #----- Select data
 
 # Select countries, all ages and difference full-demo sub-scenario and net
-plotcntr <- finalres$country_level[agegroup == "all" & sc == "full-demo" &
+plotcntr <- finalres$country_level[agegroup == "all" & sc == "clim" &
     ssp == 3,]
 
 # Add info about countries
@@ -161,9 +96,9 @@ cntr_info <- group_by(cities, CNTR_CODE) |>
 plotcntr <- merge(plotcntr, cntr_info, by.x = "country", by.y = "CNTR_CODE")
 
 # Select regional and european level data
-plotreg <- finalres$region_level[agegroup == "all" & sc == "full-demo" &
+plotreg <- finalres$region_level[agegroup == "all" & sc == "clim" &
     ssp == 3,]
-ploteu <- finalres$eu_level[agegroup == "all" & sc == "full-demo" &
+ploteu <- finalres$eu_level[agegroup == "all" & sc == "clim" &
     ssp == 3 & gcm == "ens",]
 
 # Multiply rates by the denominator
@@ -233,50 +168,6 @@ figforest <- figforest +
 # Save
 ggsave("figures/Fig2_countries.pdf", figforest, height = 8, width = 15)
 
-
-#----- Build points plot
-# 
-# # Plot layout and theme
-# figlayout <- ggplot(plotcntr) + 
-#   theme_classic() + 
-#   theme(plot.margin = unit(c(1, 5, 1, 1), "line"), legend.position = "bottom",
-#     panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
-#     panel.border = element_rect(fill = NA),
-#     axis.title = element_text(face = "bold"),
-#     axis.text.x.bottom = element_blank(), 
-#     axis.ticks.x.bottom = element_blank(),
-#     strip.text = element_text(face = "bold"),
-#     strip.background = element_rect(colour = NA, fill = NA)) + 
-#   geom_hline(yintercept = 0) + 
-#   labs(x = "", y = sprintf("Excess death rate (x%s)", 
-#     formatC(byrate, format = "f", digits = 0, big.mark = ",")), 
-#     color = "", fill = "") +
-#   facet_wrap(~ level, labeller = labeller(level = levellabs))
-# 
-# # Add regions
-# figcntrlevel <- figlayout + 
-#   geom_point(aes(x = 1, y = rate_est, col = region), alpha = .5,
-#     data = plotreg, size = 10) +
-#   # geom_hline(aes(yintercept = rate_est, col = region), linetype = 2,
-#   #   data = plotreg) + 
-#   scale_color_manual(values = regpal, 
-#     guide = guide_legend(override.aes = list(alpha = 1, size = 5)))
-# 
-# # Add countries
-# figcntrlevel <- figcntrlevel + 
-#   # geom_point(aes(x = 1, y = rate_est, group = 1, fill = region), 
-#   #   shape = 21, stroke = .01, col = "white", size = 6, 
-#   #   position = position_beeswarm(method = "compactswarm", cex = 3)) + 
-#   # geom_text(aes(x = 1, y = rate_est, group = 1, label = CNTR_CODE, col = region),
-#   #   size = 4, position = position_beeswarm(method = "compactswarm", cex = 3),
-#   #   show.legend = F, fontface = "bold")
-#   geom_shadowtext(aes(x = 1, y = rate_est, group = 1, label = CNTR_CODE, colour = region), 
-#     size = 4, position = position_beeswarm(method = "compactswarm", cex = 3),
-#     show.legend = F, bg.r = 0.1)
-# 
-# # Save
-# ggsave("figures/Fig2b_levelcountries.pdf", figcntrlevel, height = 7)
-
 #-------------------------
 # Figure 3: City maps
 #-------------------------
@@ -284,7 +175,7 @@ ggsave("figures/Fig2_countries.pdf", figforest, height = 8, width = 15)
 #----- Select data
 
 # All age group and net effect
-plotmap <- finalres$city_level[agegroup == "all" & sc == "full-demo" & 
+plotmap <- finalres$city_level[agegroup == "all" & sc == "clim" & 
     ssp == 3 & range == "tot", ]
 
 # Add geographical info

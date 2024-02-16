@@ -9,7 +9,7 @@
 #----- Calibration
 
 # Compute difference between calibrated and raw
-diffdat <- finalres$calibration[, diff := tas - cal]
+diffdat <- tsum$cal[, diff := tas - full]
 
 # Plot by summary and GCM
 ggplot(diffdat) + 
@@ -34,9 +34,9 @@ ggsave("figures/calibration.pdf")
 #----- GCM projections
 
 # Compute EU mean by 5 years
-tsumeu <- finalres$tsum[summary == "mean",] |> 
+tsumeu <- tsum$tsum[summary == "mean",] |> 
   mutate(year5 = floor(year / 5) * 5)
-tsumeu <- tsumeu[, .(tmean = mean(cal)), by = .(year5, ssp, gcm)]
+tsumeu <- tsumeu[ssp != "hist", .(tmean = mean(full)), by = .(year5, ssp, gcm)]
 
 # Plot layout and theme
 figgcm <- ggplot(tsumeu) +
@@ -64,9 +64,9 @@ ggsave("figures/Fig_GCMtmean.pdf", figgcm, width = 10)
 #----- GCM distribution at levels and periods
 
 # Compute average tmean for each warming level
-tsumlevel <- merge(finalres$tsum[summary == "mean",], warming_win, 
+tsumlevel <- merge(tsum$tsum[summary == "mean",], warming_win, 
   by = c("gcm", "year", "ssp"), all.x = T, allow.cartesian = T)
-tsumlevel <- tsumlevel[, .(tmean = mean(cal)), by = .(level, ssp, gcm)]
+tsumlevel <- tsumlevel[, .(tmean = mean(full)), by = .(level, ssp, gcm)]
 tsumlevel <- na.omit(tsumlevel)
 
 # Limit of the plot
@@ -119,10 +119,10 @@ ggsave("figures/fig_GCMdist.pdf", figall, height = 7)
 #----- Average warming by city
 
 # Extract calibrated series (last 5y period)
-citytsum <- mutate(finalres$tsum, year5 = floor(year / 5) * 5) |>
+citytsum <- mutate(tsum$tsum, year5 = floor(year / 5) * 5) |>
   subset(summary == "mean" & year5 %in% range(year5)) |>
   melt(id.vars = c("year", "year5", "city", "ssp"), 
-    measure.vars = patterns("^cal"), 
+    measure.vars = patterns("^full"), 
     variable.name = "gcm", value.name = "tmean") |>
   mutate(gcm = gsub("cal_", "", gcm, fixed = T))
 
@@ -186,7 +186,7 @@ ggsave("figures/fig_GCMlevels.pdf", width = 10)
 # Demographic projections
 #-------------------------------
 
-# Country palette ordred like regions
+# Country palette ordered like regions
 names(cntrpal) <- summarise(cities, lat = mean(lat), 
     .by = c("CNTR_CODE", "region")) |>
   mutate(region = factor(region, levels = ordreg)) |>
@@ -196,7 +196,8 @@ names(cntrpal) <- summarise(cities, lat = mean(lat),
 #----- Population projections
 
 # Compute population change
-popsum <- proj[, .(pop = sum(wittpop)), by = .(CNTR_CODE, ssp, year5)]
+popsum <- proj[year5 >= min(projrange), .(pop = sum(wittpop)), 
+  by = .(CNTR_CODE, ssp, year5)]
 popchange <- popsum[, .(year5, pop = 100 * (pop - pop[year5 == min(year5)]) / 
     pop[year5 == min(year5)]), by = .(CNTR_CODE, ssp)]
 
@@ -250,7 +251,8 @@ ggsave("figures/Fig_Popproj.pdf", height = 10)
 #   by = .(CNTR_CODE, ssp, year5)]
 
 # Compute population structure for EU
-eustruct <- proj[, .(pop = sum(wittpop)), by = .(agegroup, ssp, year5)]
+eustruct <- proj[year5 >= min(projrange), .(pop = sum(wittpop)), 
+  by = .(agegroup, ssp, year5)]
 eustruct[, popprop := 100 * pop / sum(pop), by = .(ssp, year5)]
 
 # Plot
@@ -277,7 +279,8 @@ ggsave("figures/Fig_Structproj.pdf")
 #----- Death rate projections
 
 # Compute population change
-drsum <- proj[, .(pop = sum(wittpop), death = sum(wittdeath)), 
+drsum <- proj[year5 >= min(projrange), 
+  .(pop = sum(wittpop), death = sum(wittdeath)), 
   by = .(CNTR_CODE, ssp, year5)]
 drsum[, dr := death / pop]
 drchange <- drsum[, .(year5, dr = 100 * (dr - dr[year5 == min(year5)]) / 
@@ -336,12 +339,12 @@ ggsave("figures/Fig_DRproj.pdf", height = 10)
 
 # Extract detail of total deaths
 plotan <- finalres$eu_period[agegroup == "all" & range != "tot" &
-    sc %in% c("full-demo", "demo") & ssp %in% ssplist & gcm == "ens",]
+    sc %in% c("clim", "demo") & ssp %in% ssplist & gcm == "ens",]
 
 # Create interaction for aesthetic
 plotan[, group := factor(interaction(range, sc),
-  levels = c("heat.full-demo", "heat.demo", "cold.demo", "cold.full-demo"),
-  labels = c("Climate change - Heat", "Baseline - Heat", 
+  levels = c("heat.clim", "heat.demo", "cold.demo", "cold.clim"),
+  labels = c("Climate change - Heat", "Baseline - Heat",
     "Baseline - Cold", "Climate change - Cold"))]
 
 # Create aesthetic
@@ -367,7 +370,7 @@ ggplot(plotan) +
     formatC(byan, format = "f", digits = 0, big.mark = ","))) + 
   coord_cartesian(clip = "off") + 
   geom_area(aes(x = period, y = an_est / byan, group = group, fill = group)) +
-  scale_fill_manual(values = pal, labels = nms, name = "", 
+  scale_fill_manual(values = pal, name = "", 
     breaks = c("Climate change - Cold", "Climate change - Heat", 
       "Baseline - Cold", "Baseline - Heat"),
     guide = guide_legend(ncol = 2, byrow = T)) + 
@@ -380,7 +383,7 @@ ggsave("figures/Fig_TotalExcess.pdf", width = 12, height = 7)
 #----- Results by age
 
 # Select age groups and clim only scenario for european wide
-plotage <- finalres$eu_period[agegroup != "all" & sc == "full-demo" &
+plotage <- finalres$eu_period[agegroup != "all" & sc == "clim" &
     ssp %in% ssplist & gcm == "ens" & range == "tot",]
 
 # Plot
@@ -407,7 +410,7 @@ ggsave("figures/Fig_age.pdf", width = 10, height = 5)
 #----- Result by GCM
 
 # Select age groups and clim only scenario for european wide
-plotgcm <- finalres$eu_period[agegroup == "all" & sc == "full-demo" &
+plotgcm <- finalres$eu_period[agegroup == "all" & sc == "clim" &
     ssp %in% ssplist & range == "tot",]
 
 # Multiply rates by the denominator
@@ -440,60 +443,64 @@ ggplot(plotgcm) +
 ggsave("figures/Fig_GCMresult.pdf", width = 10)
 
 
+#----- Trends for countries and regions
 
+# Select countries, all ages and difference full-demo sub-scenario and net
+plotcntr <- finalres$country_period[agegroup == "all" & sc == "clim" &
+    range == "tot" & ssp %in% ssplist,]
 
+# Add info about countries
+cntr_info <- group_by(cities, CNTR_CODE) |>
+  summarise(cntr_name = cntr_name[1], region = region[1],lat = mean(lat))
+plotcntr <- merge(plotcntr, cntr_info, by.x = "country", by.y = "CNTR_CODE")
 
+# Select regional data
+plotreg <- finalres$region_period[agegroup == "all" & sc == "clim" &
+    range == "tot" & ssp %in% ssplist,]
 
+# Multiply rates by the denominator
+ratevars <- grep("rate", colnames(plotcntr), value = T)
+plotcntr[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
+plotreg[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 
-### TRENDS FOR COUNTRIES/REGIONS
+# Data to display country on the right
+cntrlabs <- plotcntr[period == max(period) & ssp == 3,]
 
+#----- Build plot
 
+# Plot layout and theme
+figtrend_cntr <- ggplot(plotcntr) +
+  theme_classic() +
+  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), legend.position = "bottom",
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA)) +
+  geom_hline(yintercept = 0) +
+  facet_wrap(~ ssp, ncol = 1, labeller = labeller(ssp = ssplabs)) +
+  labs(x = "", y = sprintf("Excess death rate (x%s)",
+    formatC(byrate, format = "f", digits = 0, big.mark = ",")),
+    color = "", fill = "") +
+  coord_cartesian(clip = "off", xlim = range(plotcntr$period))
 
+# Add country level curves
+figtrend_cntr <- figtrend_cntr +
+  geom_line(aes(x = period, y = rate_est, col = region, group = country),
+    alpha = .3) +
+  geom_text(aes(y = rate_est, label = cntr_name, x = max(period) + 5,
+      col = region), alpha = .8, size = 3,
+    data = plotcntr[period == max(period),], hjust = -0,
+    show.legend = F, check_overlap = T, nudge_x = 1)
 
+# Add region level curves
+figtrend_cntr <- figtrend_cntr +
+  geom_line(aes(x = period, y = rate_est, col = region, group = region),
+    data = plotreg, linewidth = rel(1.5)) +
+  scale_color_manual(values = regpal)
 
-
-#-------------------------------
-# Decomposition of uncertainty
-#-------------------------------
-# 
-# #----- Compute two levels of uncertainty
-# 
-# # Extract only climate part and net effet
-# uncert_data <- subset(finalres$total$level, agegroup == "all" & 
-#     sc == "full-demo" & ssp %in% ssplist & range == "tot" & ssp == 3,
-#   -c(range, sc, agegroup))
-# 
-# # Compute range due to climate models
-# uncert_decomp <- subset(uncert_data, gcm != "ens") |>
-#   group_by(level) |>
-#   summarise(rate_low_gcm = min(rate_est), rate_high_gcm = max(rate_est)) |>
-#   merge(subset(uncert_data, gcm == "ens", c(level, ssp, rate_low, rate_high)))
-# 
-# #----- Plot
-# 
-# # Palette
-# pal <- scico(2, palette = "bamako")
-# 
-# # Plot layout and theme
-# figlayout <- ggplot(uncert_decomp) +
-#   theme_classic() + 
-#   theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
-#     panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
-#     panel.border = element_rect(fill = NA), 
-#     panel.background = element_rect(fill = NA),
-#     strip.text = element_text(face = "bold"),
-#     axis.title = element_text(face = "bold"),
-#     strip.background = element_rect(colour = NA, fill = NA)) + 
-#   geom_hline(yintercept = 0) + 
-#   labs(x = "Warming level", y = sprintf("Excess death rate (x%s)", 
-#     formatC(byrate, format = "f", digits = 0, big.mark = ",")))
-# 
-# # Add confidence intervals
-# figlayout + 
-#   geom_segment(aes(x = level, xend = level, y = rate_low, yend = rate_high), 
-#     linewidth = 20, col = pal[1]) +
-#   geom_segment(aes(x = level, xend = level, y = rate_low_gcm, 
-#     yend = rate_high_gcm), linewidth = 20, col = pal[2])
+# Save
+ggsave("figures/Fig_trendcountries.pdf", figtrend_cntr, height = 10, width = 7)
 
 
 

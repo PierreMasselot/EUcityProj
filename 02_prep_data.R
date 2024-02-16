@@ -17,6 +17,18 @@ cityage <- read.csv("data/city_results.csv")
 cities <- unique(subset(cityage, select = c("URAU_CODE", "LABEL", "CNTR_CODE", 
   "cntr_name", "region", "lon", "lat", "pop")))
 
+# Countries
+countries <- summarise(cities, 
+  ncities = length(URAU_CODE), lastcity = last(URAU_CODE),
+    lat = mean(lat), region = unique(region), .by = CNTR_CODE) |>
+  mutate(region = factor(region, levels = ordreg)) |>
+  arrange(region, desc(lat))
+
+# Reorder cities
+cities <- mutate(cities, region = factor(region, levels = ordreg),
+    CNTR_CODE = factor(CNTR_CODE, levels = countries$CNTR_CODE)) |>
+  arrange(region, CNTR_CODE, URAU_CODE)
+
 ################################################################################
 # LOAD DEMOGRAPHIC DATA
 ################################################################################
@@ -85,8 +97,11 @@ projdata[, ":="(pop = wittpop * popfac, death = wittdeath * dfac)]
 
 #----- Some further data cleaning
 
-# SELECT SSP
+# SELECT SSP. Discard the duplicates of historical period
 projdata <- projdata[ssp %in% ssplist,]
+projdata[, ssp := as.character(ssp)]
+projdata[year5 %between% histrange, ssp := "hist"]
+projdata <- unique(projdata)
 
 # SELECT CITIES WITH FULL DATA 
 cities <- subset(cities, URAU_CODE %in% projdata$URAU_CODE)
@@ -119,7 +134,7 @@ warming_years <- mutate(warming_years,
     gcm = gsub("-", "_", model_run),
     model_run = NULL,
     ssp = str_split_i(level, "_", 2),
-    ssp = as.integer(substr(str_extract(ssp, ".*ssp[[:digit:]]"), 4, 4)),
+    ssp = substr(str_extract(ssp, ".*ssp[[:digit:]]"), 4, 4),
     level = str_split_i(level, "_", 1)) |>
   subset(level %in% targets & ssp %in% ssplist)
 
@@ -132,12 +147,6 @@ warming_win <- group_by(warming_years, gcm, level, ssp) |>
 
 ################################################################################
 # Final tidying
-
-# Use common city ordering (for iterators later)
-citylevs <- sort(cities$URAU_CODE)
-cities <- mutate(cities, URAU_CODE = factor(URAU_CODE, citylevs))
-coefs <- mutate(coefs, URAU_CODE = factor(URAU_CODE, citylevs))
-projdata[, URAU_CODE := factor(URAU_CODE, citylevs)]
 
 # Load European map data
 euromap <- gisco_get_countries(year = "2020")

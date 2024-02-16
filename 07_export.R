@@ -2,11 +2,6 @@
 # RESULT EXPORT
 ################################################################################
 
-if(length(ls()) == 0){
-  load("temp/fullresults.RData")
-  source("01_pkg_params.R")
-}
-
 #--------------------------
 # Export results for Visualization
 #--------------------------
@@ -110,7 +105,7 @@ foreach(dgeo = finalres[c("city", "country", "region", "total")],
   foreach(d = dgeo, lab = names(dgeo)) %do% 
 {
   # Select data to export
-  d <- subset(d, ssp %in% ssplist & sc %in% c("demo", "full-demo", "full"))
+  d <- subset(d, ssp %in% ssplist & sc %in% c("demo", "clim", "full"))
   if (!is.null(d$gcm)) subset(d, gcm == "ens", -gcm)
   
   # Export

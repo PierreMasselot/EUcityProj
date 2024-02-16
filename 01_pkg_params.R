@@ -36,12 +36,21 @@ library(flextable) # To create tables
 library(ggdist) # To visualise distributions
 
 #----- Custom functions
-source("bc_isimip3.R") # ISIMIP3 bias-correction method
+source("isimip3.R") # ISIMIP3 bias-correction method
 source("impact.R") # Functions to compute and combine impact summaries
 
 #------------------------
 # PARAMETERS
 #------------------------
+
+#----- Computation
+
+# NUMBER OF ITERATIONS IN THE MONTE-CARLO SIMULATIONS AND PARALLELIZATION CORES
+nsim <- 1000
+ncores <- pmax(detectCores() - 1, 1)
+
+# Size of groups of cities to parallelise
+grpsize <- 50
 
 #----- ANALYSIS
 
@@ -54,13 +63,10 @@ agelabs <- gsub("-Inf", "+",
 varfun <- "bs"
 vardegree <- 2
 varper <- c(10, 75, 90)
+vardf <- vardegree + length(varper)
 
 # TEMPERATURE PERCENTILES
 predper <- c(seq(0, 1, 0.1), 2:98, seq(99, 100, 0.1))
-
-# NUMBER OF ITERATIONS IN THE MONTE-CARLO SIMULATIONS AND PARALLELIZATION CORES
-nsim <- 1000
-ncores <- pmax(detectCores() - 2, 1)
 
 # DENOMINATOR FOR RATES
 byrate <- 10^5
@@ -76,21 +82,16 @@ stdweight<- tapply(esp2013, espgrps, sum)
 
 #----- SERIES AND LABELS
 
-# DEFINE RANGE PERIODS 
-# NB: DEMOGRAPHIC PROJECTIONS START IN 2020
-obsrange <- c(1990, 2019)
-# projrange <- c(2015, 2099)
-projrange <- seq(2010, 2100, by = 10)
-histrange <- c(2010, 2014)
+# DEFINE RANGE PERIODS - projrange is split by calibration period
+projrange <- c(2015, seq(2030, 2100, by = 10))
+histrange <- c(2000, 2014)
 
 # DAY SEQUENCES
 # NB: REMOVE LEAP DAYS FROM PROJECTION PERIOD
-obsday <- seq(as.Date(paste(obsrange[1], 01, 01, sep = "-")),
-  as.Date(paste(obsrange[2], 12, 31, sep = "-")), by = 1)
-obsday <- obsday[month(obsday) != 2 | mday(obsday) != 29]
-projday <- seq(as.Date(paste(projrange[1], 01, 01, sep = "-")),
-  as.Date(paste(tail(projrange, 1) - 1, 12, 31, sep = "-")), by = 1)
-projday <- projday[month(projday) != 2 | mday(projday) != 29]
+totrange <- range(c(histrange, projrange))
+dayvec <- seq(as.Date(paste(totrange[1], 01, 01, sep = "-")),
+  as.Date(paste(totrange[2] - 1, 12, 31, sep = "-")), by = 1)
+dayvec <- dayvec[month(dayvec) != 2 | mday(dayvec) != 29]
 
 # Regions
 ordreg <- c("Northern", "Western", "Eastern", "Southern")
