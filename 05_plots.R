@@ -47,7 +47,8 @@ figlayout <- ggplot(plottrends) +
   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
   labs(x = "", y = sprintf("Excess death rate (x%s)", 
       formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
-  scale_x_continuous(limits = range(plottrends$period)) +
+  scale_x_continuous(limits = c(min(plottrends$period), 2100), 
+    expand = rep(0, 2)) +
   coord_cartesian(clip = "off")
 
 # Add warming windows
@@ -58,8 +59,9 @@ figlayout <- figlayout +
   scale_fill_gradient(low = "white", high = "black", limits = c(0, 100), 
     name = "Warming level window\n(%GCM)", breaks = c(25, 50, 75),
     guide = guide_colourbar(barwidth = rel(.5), 
-      barheight = rel(3), title.theme = element_text(size = rel(8)),
-      label.theme = element_text(size = rel(8)))) + 
+      barheight = rel(3), title.theme = element_text(size = rel(.8)),
+      label.theme = element_text(size = rel(.8)),
+      order = 1)) + 
   scale_y_continuous(breaks = ybr, sec.axis = sec_axis(~ ., labels = levellabs,
       breaks = seq_along(levellabs) * winsize + max(plottrends$rate_high))) +
   theme(axis.ticks.length.y.right = unit(0, "mm"), 
@@ -118,7 +120,12 @@ plotcntr[, id := .GRP - as.numeric(region) * 2, by = .(country)]
 plotreg <- plotreg[plotcntr[, .(id = min(id) - 1.5), by = region], 
   on = "region"]
 ploteu[, id := min(plotreg$id) - 2]
-poslab <- unique(plotcntr[, c("id", "cntr_name")])
+
+# Labels for levels
+poslab <- rbind(unique(plotcntr[, c("id", "cntr_name")]),
+  unique(plotreg[, .(id, cntr_name = "Total")]), 
+  unique(ploteu[, .(id, cntr_name = "Europe")]),
+  use.names = F)
 
 #----- Build forest plot
 
@@ -128,7 +135,7 @@ figforest <- ggplot(plotcntr) +
   theme(panel.grid.major.x = element_line(colour = grey(.9), linewidth = .01),
     panel.border = element_rect(fill = NA), 
     axis.ticks.y = element_blank(),
-    strip.text = element_text(face = "bold", size = 13),
+    strip.text = element_markdown(face = "bold", size = 13),
     strip.background = element_rect(colour = NA, fill = NA),
     axis.text.x.bottom = element_text(angle = -45, hjust = 0.5, vjust = 0.1)) + 
   facet_grid(rows = vars(region), cols = vars(level), scales = "free_y", 

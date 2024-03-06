@@ -19,8 +19,8 @@ cities <- unique(subset(cityage, select = c("URAU_CODE", "LABEL", "CNTR_CODE",
 
 # Countries
 countries <- summarise(cities, 
-  ncities = length(URAU_CODE), lastcity = last(URAU_CODE),
-    lat = mean(lat), region = unique(region), .by = CNTR_CODE) |>
+    ncities = length(URAU_CODE), lat = mean(lat), region = unique(region), 
+    .by = CNTR_CODE) |>
   mutate(region = factor(region, levels = ordreg)) |>
   arrange(region, desc(lat))
 

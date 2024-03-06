@@ -34,6 +34,7 @@ library(giscoR) # For Europe map
 library(scales) # For color scale fine tuning
 library(flextable) # To create tables
 library(ggdist) # To visualise distributions
+library(ggtext) # To display degree symbols
 
 #----- Custom functions
 source("isimip3.R") # ISIMIP3 bias-correction method
@@ -117,11 +118,11 @@ gcmlist <- setdiff(gcmavail, gcmexcl)
 #----- Aesthetic parameters
 
 # SSP
-ssplabs <- c("1" = "SSP1-RCP2.6", "2" = "SSP2-RCP4.5", "3" = "SSP3-RCP7.0")
+ssplabs <- c("1" = "SSP1-2.6", "2" = "SSP2-4.5", "3" = "SSP3-7.0")
 ssppal <- scico(length(ssplist), palette = "glasgow", direction = -1)
 
 # Warming levels
-levellabs <- sprintf("%s C", targets) 
+levellabs <- sprintf("%s\u00B0C", targets) 
 levelcol <- scico(length(targets) + 1, palette = "grayC", direction = -1)[-1]
 names(levellabs) <- names(levelcol) <- targets
 

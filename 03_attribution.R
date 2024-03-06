@@ -2,18 +2,36 @@
 # Attribution script
 ################################################################################
 
-#----- Prepare the loop
+#----- Prepare data
 
-# Directory for temporary saving (keep memory clear)
-tdir <- tempdir()
-# tdir <- "D:/Pierre/EUcityProj"
+# When testing
+# nsim <- 10
+# cities <- cities[sort(sample.int(nrow(cities), 15)),]
 
-# Initialise data
+# Initialise dates for temperature
 init_df <- data.table(date = dayvec)[,":="(
   day = mday(date), month = month(date), year = year(date)
 )]
 init_df[,  ":="(year5 = floor(year / 5) * 5)]
 setkey(init_df, date)
+
+# Create groups to iterate though cities
+ncities <- nrow(cities)
+cities$grp <- rep(1:ceiling(ncities / grpsize), each = grpsize)[1:ncities]
+
+# Determine last city of each country
+countries <- summarise(cities, lastcity = last(URAU_CODE), .by = CNTR_CODE) |>
+  right_join(countries)
+
+# Determine regions
+regions <- summarise(cities, chg = max(grp), .by = region)
+
+
+#----- Prepare the loop
+
+# Directory for temporary saving (keep memory clear)
+tdir <- tempdir()
+# tdir <- "D:/Pierre/EUcityProj"
 
 # List of necessary packages
 packs <- c("dlnm", "dplyr", "data.table", "doSNOW", "arrow", "collapse")
@@ -23,13 +41,6 @@ libs <- .libPaths()
 writeLines(c(""), "temp/attr.txt")
 cat(as.character(as.POSIXct(start <- Sys.time())),
   file="temp/attr.txt", append=T)
-
-# Create groups to iterate though cities
-ncities <- nrow(cities)
-cities$grp <- rep(1:ceiling(ncities / grpsize), each = grpsize)[1:ncities]
-
-# Determine regions
-regions <- summarise(cities, chg = max(grp), .by = region)
 
 st <- Sys.time()
 
@@ -129,33 +140,24 @@ for (igrp in seq_len(max(cities$grp))) {
       yearsimhist = year, yearsimfut = year), 
       by = .(month, year5, ssp, gcm)]
     
-    # Remove part of the historical period for which we don't want ANs
-    tmeandf <- tmeandf[year5 >= (min(projrange) - perlen),]
-    
     #----- Export summary of temperature
     
-    # Summary of temperatures
-    tsum <- tmeandf[, c(list(summary = c("mean", "cold", "heat")), 
-      lapply(.SD, function(x) c(mean = mean(x, na.rm = T), 
-        quantile(x, c(.01, .99), na.rm = T)))),
-      by = .(year, gcm, ssp), .SDcols = c("tas", "full", "demo")]
-    
-    # Quality of calibration
-    tsumhist <- tmeanhist[, c(list(summary = c("mean", "cold", "heat")), 
-      lapply(.SD, function(x) c(mean = mean(x, na.rm = T), 
-        quantile(x, c(.01, .99), na.rm = T)))),
-      by = y, .SDcols = "tmeanobs"]
-    calscore <- tsum[tsumhist, on = c(year = "y", summary = "summary")][,
-      lapply(.SD, function(x) sqrt(mean((tmeanobs - x)^2))), 
-      .SDcols = c("tas", "full"), by = .(gcm, summary),
-    ]
+    # Summary of temperatures by period
+    tmeandf[, period := factor(ifelse(ssp == "hist", "hist", year5), 
+      levels = c("hist", unique(tmeandf$year5)))]
+    tsum <- tmeandf[, c(list(perc = predper), 
+        lapply(.SD, function(x) fquantile(x, predper / 100))),
+      by = .(period, gcm, ssp), .SDcols = c("tas", "full", "demo")]
+    tmeandf[, period := NULL]
     
     # Export
     dir.create(sprintf("%s/tsum/%s", tdir, city), recursive = T)
     write_parquet(tsum, sprintf("%s/tsum/%s/tsum.parquet", tdir, city))
-    write_parquet(tsum, sprintf("%s/tsum/%s/cal.parquet", tdir, city))
     
     #----- Prepare ERFs 
+    
+    # Remove part of the historical period for which we don't want ANs
+    tmeandf <- tmeandf[year >= (min(projrange) - perlen),]
     
     # Prepare basis parameters (common to all age groups)
     # tper extracted above (after reading tmeanhist)
@@ -333,15 +335,16 @@ for (igrp in seq_len(max(cities$grp))) {
   
   #----- Aggregate region if relevant
   
-  if (igrp %in% regions$chg){
-    
-    # Countries
-    reg <- subset(regions, chg == igrp, region, drop = T)
-    regcntr <- subset(countries, region == reg, CNTR_CODE, drop = T)
-    
-    # Reload dataset
-    regds <- open_dataset(sprintf("%s/loop", tdir), 
-      partitioning = c("CNTR_CODE", "agegroup"))
+  # Regions that are finalised in the current chunk
+  grpregs <- subset(regions, chg == igrp, region, drop = T)
+  
+  # Reload dataset
+  regds <- open_dataset(sprintf("%s/loop", tdir), 
+    partitioning = c("CNTR_CODE", "agegroup"))
+  
+  for (reg in grpregs){
+    # Extract relevant countries
+    regcntr <- subset(countries, region %in% reg, CNTR_CODE, drop = T)
     
     # Loop through ages
     foreach(a = agelabs, .combine = combres, .final = function(x) allages(x,
@@ -493,32 +496,11 @@ lapply(names(finalres), function(nm) {
 unlink(sprintf("%s/%s", tdir, c("loop", "loopreg")), recursive = T)
 unlink(dirlist, recursive = T)
 
-#----- Put together temperature summaries and move
+#----- Put together temperature summaries and copy to result
 
-# Read summaries
-tsums <- list(
-  tsum = open_dataset(sprintf("%s/tsum", tdir), partitioning = c("city"),
-      factory_options = list(selector_ignore_prefixes = "cal")) |>
-    collect(),
-  cal = open_dataset(sprintf("%s/tsum", tdir), partitioning = c("city"),
-      factory_options = list(selector_ignore_prefixes = "tsum")) |>
-    collect()
-)
-
-# Expand historical period
-tsumhist <- lapply(tsums, function(x){
-  his <- x[ssp == "hist",]
-  hisexp <- lapply(ssplist, function(issp) copy(his)[, ssp := issp])
-  rbindlist(hisexp)
-})
-
-# Remove historical period and add the expanded one
-tsums <- lapply(tsums, function(x) x[ssp != "hist",])
-tsums <- Map(rbind, tsumhist, tsums)
-
-# Export
-lapply(names(tsums), 
-  function(nm) write_parquet(tsums[[nm]], sprintf("%s/%s.parquet", resdir, nm)))
+# Read temperature summaries and write
+open_dataset(sprintf("%s/tsum", tdir), partitioning = c("city")) |>
+  write_dataset(resdir, basename_template = "tsum{i}.parquet")
 
 # Erase temporary files
 list.files(sprintf("%s/tsum", tdir), include.dirs = T, full.names = T) |>

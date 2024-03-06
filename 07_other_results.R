@@ -3,6 +3,84 @@
 ################################################################################
 
 #--------------------------
+# In-text numbers
+#--------------------------
+
+#----- Patterns of excess deaths
+
+# Death rates by period
+lapply(1:3, function(i){ finalres$eu_period[agegroup == "all" & 
+    sc == "clim" & gcm == "ens" & range == "tot" & ssp == i, 
+  .(period, rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
+    rate_low * byrate, rate_high * byrate))]
+})
+
+# Total numbers at the end of century
+finalres$eu_period[agegroup == "all" & sc == "clim" & 
+    gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
+  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", an_est, an_low, an_high))]
+
+# Cumulative numbers
+finalres$eu_period[agegroup == "all" & sc == "clim" & 
+    gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
+  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", cuman_est, cuman_low, 
+    cuman_high))]
+
+# Death rates by warming level
+finalres$eu_level[agegroup == "all" & sc == "clim" & gcm == "ens" & 
+    range == "tot" & ssp == 3, 
+  .(level, rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
+    rate_low * byrate, rate_high * byrate),
+    an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", an_est, an_low, an_high))]
+
+#----- Regional level
+
+# Rate results
+finalres$region_level[agegroup == "all" & sc == "clim" & 
+    range == "tot" & ssp == 3, 
+  .(region, level, 
+    rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
+      rate_low * byrate, rate_high * byrate))]
+
+#----- Country level
+
+countryres <- subset(finalres$country_level, 
+  agegroup == "all" & sc == "clim" & range == "tot" & ssp == 3)
+
+# Countries with increase decrease
+countryres[, .N, by = .(level, sign(rate_est))]
+
+# Most and least impacted country
+countryres |> 
+  filter(rate_est == max(rate_est), .by = level) |>
+  mutate(rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", 
+    rate_est * byrate, rate_low * byrate, rate_high * byrate))
+countryres |> 
+  filter(rate_est == min(rate_est), .by = level) |>
+  mutate(rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", 
+    rate_est * byrate, rate_low * byrate, rate_high * byrate))
+
+# Relative increases
+subset(finalres$country_period, 
+  agegroup == "all" & range == "tot" & ssp == 3) |>
+  summarise((rate_est[sc == "clim" & period == max(period)] - 
+      rate_est[sc == "full" & period == min(period)]) / 
+      rate_est[sc == "full" & period == min(period)],
+    .by = country)
+
+#----- Attributable fractions
+
+# Extract total
+finalres$eu_period[agegroup == "all" & sc == "full" & gcm == "ens" &
+    range == "tot" & ssp %in% ssplist & period == max(period),
+  .(ssp, af_est, af_low, af_high)]
+
+# By country
+cntraf <- finalres$country_period[agegroup == "all" & sc == "full" &
+    range == "tot" & ssp %in% ssplist & period == max(period),
+  .(country, ssp, af_est, af_low, af_high)]
+
+#--------------------------
 # Export results for Visualization
 #--------------------------
 
@@ -95,20 +173,4 @@ writeDataTable(wb, "Warming levels", levelranges)
 saveWorkbook(wb, sprintf("results/Visualisation_data_%s.xlsx", Sys.Date()), 
   overwrite = T)
 
-#--------------------------
-# Export results for Shiny app
-#--------------------------
-
-# Loop on aggregation levels (removing the temperature summary) and type
-foreach(dgeo = finalres[c("city", "country", "region", "total")], 
-    geolab = c("city", "country", "region", "total")) %:% 
-  foreach(d = dgeo, lab = names(dgeo)) %do% 
-{
-  # Select data to export
-  d <- subset(d, ssp %in% ssplist & sc %in% c("demo", "clim", "full"))
-  if (!is.null(d$gcm)) subset(d, gcm == "ens", -gcm)
-  
-  # Export
-  saveRDS(d, file = sprintf("results/%s_%s.RDS", geolab, lab))
-}
 

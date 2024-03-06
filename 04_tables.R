@@ -13,102 +13,16 @@ if(length(ls()) == 0){
   nmlist <- expand.grid(c("city", "country", "region", "eu"), 
       c("period", "level")) |>
     apply(1, paste, collapse = "_")
-  resdir <- "results/2024-02-14_1000"
+  resdir <- "results/2024-02-25_1000"
   flist <- sprintf("%s/%s.parquet", resdir, nmlist)
   
   # Read all results
   finalres <- lapply(flist, read_parquet)
   names(finalres) <- nmlist
-  
-  # Read summaries of temperature
-  tf <- c("tsum", "cal")
-  tflist <- sprintf("%s/%s.parquet", resdir, tf)
-  tsum <- lapply(tflist, read_parquet)
-  names(tsum) <- tf
 }
 
-
 #--------------------------
-# Some results
-#--------------------------
-
-#----- Patterns of excess deaths
-
-# Death rates by period
-lapply(1:3, function(i){ finalres$eu_period[agegroup == "all" & 
-    sc == "clim" & gcm == "ens" & range == "tot" & ssp == i, 
-  .(period, rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
-    rate_low * byrate, rate_high * byrate))]
-})
-  
-# Total numbers at the end of century
-finalres$eu_period[agegroup == "all" & sc == "clim" & 
-    gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
-  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", an_est, an_low, an_high))]
-
-# Cumulative numbers
-finalres$eu_period[agegroup == "all" & sc == "clim" & 
-    gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
-  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", cuman_est, cuman_low, 
-    cuman_high))]
-
-# Death rates by warming level
-finalres$eu_level[agegroup == "all" & sc == "clim" & gcm == "ens" & 
-    range == "tot" & ssp == 3, 
-  .(level, rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
-      rate_low * byrate, rate_high * byrate),
-    an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", an_est, an_low, an_high))]
-
-#----- Regional level
-
-# Rate results
-finalres$region_level[agegroup == "all" & sc == "clim" & 
-    range == "tot" & ssp == 3, 
-  .(region, level, 
-    rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", rate_est * byrate, 
-    rate_low * byrate, rate_high * byrate))]
-
-#----- Country level
-
-countryres <- subset(finalres$country_level, 
-  agegroup == "all" & sc == "clim" & range == "tot" & ssp == 3)
-
-# Countries with increase decrease
-countryres[, .N, by = .(level, sign(rate_est))]
-
-# Most and least impacted country
-countryres |> 
-  filter(rate_est == max(rate_est), .by = level) |>
-  mutate(rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", 
-    rate_est * byrate, rate_low * byrate, rate_high * byrate))
-countryres |> 
-  filter(rate_est == min(rate_est), .by = level) |>
-  mutate(rate = sprintf("%2.1f (95%%eCI: %2.1f to %2.1f)", 
-    rate_est * byrate, rate_low * byrate, rate_high * byrate))
-
-# Relative increases
-subset(finalres$country_period, 
-    agegroup == "all" & range == "tot" & ssp == 3) |>
-  summarise((rate_est[sc == "clim" & period == max(period)] - 
-      rate_est[sc == "full" & period == min(period)]) / 
-      rate_est[sc == "full" & period == min(period)],
-    .by = country)
-
-#----- Attributable fractions
-
-# Extract total
-finalres$eu_period[agegroup == "all" & sc == "full" & gcm == "ens" &
-    range == "tot" & ssp %in% ssplist & period == max(period),
-  .(ssp, af_est, af_low, af_high)]
-
-# By country
-cntraf <- finalres$country_period[agegroup == "all" & sc == "full" &
-    range == "tot" & ssp %in% ssplist & period == max(period),
-  .(country, ssp, af_est, af_low, af_high)]
-
-
-#--------------------------
-# Big table of rates
+# Table 1: Big table of rates
 #--------------------------
 
 #----- Parameters
