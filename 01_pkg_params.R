@@ -17,7 +17,7 @@ library(sf) # For mapping
 library(openxlsx) # To export data in excel
 
 #----- Statistical analysis
-library(dlnm) # Create bases for RR computation
+library(dlnm); library(splines) # Create bases for RR computation
 library(doParallel) # Parallelize computation
 library(doSNOW) # To ensure parallelisation works fine
 library(PHEindicatormethods) # Includes European Standard Population (2013)
@@ -35,6 +35,7 @@ library(scales) # For color scale fine tuning
 library(flextable) # To create tables
 library(ggdist) # To visualise distributions
 library(ggtext) # To display degree symbols
+library(lemon) # For the pointpath geom
 
 #----- Custom functions
 source("isimip3.R") # ISIMIP3 bias-correction method
@@ -48,10 +49,14 @@ source("impact.R") # Functions to compute and combine impact summaries
 
 # NUMBER OF ITERATIONS IN THE MONTE-CARLO SIMULATIONS AND PARALLELIZATION CORES
 nsim <- 1000
-ncores <- pmax(detectCores() - 1, 1)
+ncores <- pmax(detectCores() - 1, 1) |> pmin(15)
 
 # Size of groups of cities to parallelise
 grpsize <- 50
+
+# Directory for temporary saving (keep memory clear)
+tdir <- tempdir()
+# tdir <- "temp"
 
 #----- ANALYSIS
 
@@ -115,6 +120,14 @@ gcmavail <- open_dataset("data/tmeanproj.gz.parquet")$schema$names |>
   grep(pattern = "tas_", value = T) |> gsub(pattern = "tas_", repl = "")
 gcmlist <- setdiff(gcmavail, gcmexcl)
 
+# Prepare the adaptation scenarios:
+# No adaptation for SSP 1 and 2, adaptation of 5 and 10% for SSP3
+adaptdf <- data.frame(
+  adapt = rep(c("0%", "10%", "50%", "90%"), 3),
+  ssp = rep(1:3, each = 4),
+  heat = rep(c(0, 10, 50, 90), 3),
+  cold = 0)
+
 #----- Aesthetic parameters
 
 # SSP
@@ -127,7 +140,7 @@ levelcol <- scico(length(targets) + 1, palette = "grayC", direction = -1)[-1]
 names(levellabs) <- names(levelcol) <- targets
 
 # Temperature range
-rnglabs <- c("tot" = "Total", "cold" = "Cold", "heat" = "Heat")
+rnglabs <- c("cold" = "Cold", "heat" = "Heat", "tot" = "Total")
 # rngpal <- c("tot" = 1, "cold" = 4, "heat" = 2)
 rngpal <- scico(n = 5, palette = "berlin")[c(1, 3, 4)] |> 
   "names<-"(c("cold", "tot", "heat"))
@@ -140,10 +153,14 @@ regpal <- viridis(length(ordreg))
 names(regpal) <- ordreg
 
 # Age
-agepal <- scico(length(agelabs), palette = "batlow")
+agepal <- viridis(length(agelabs), direction = -1)
 names(agepal) <- agelabs
 
 # GCM
 gcmpal <- scico(length(gcmavail), palette = "batlow")
 gcmlntp <- rep_len(c("solid", "dashed", "dotted", "dotdash"), length(gcmavail))
 names(gcmpal) <- names(gcmlntp) <- gcmavail
+
+# Adaptation factors
+adapal <- scico(length(unique(adaptdf$adapt)), palette = "tokyo", end = .8)
+names(adapal) <- unique(adaptdf$adapt) |> sort()

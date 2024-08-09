@@ -7,6 +7,7 @@
 # When testing
 # nsim <- 10
 # cities <- cities[sort(sample.int(nrow(cities), 15)),]
+# cities <- subset(cities, CNTR_CODE == "FI")
 
 # Initialise dates for temperature
 init_df <- data.table(date = dayvec)[,":="(
@@ -26,12 +27,7 @@ countries <- summarise(cities, lastcity = last(URAU_CODE), .by = CNTR_CODE) |>
 # Determine regions
 regions <- summarise(cities, chg = max(grp), .by = region)
 
-
 #----- Prepare the loop
-
-# Directory for temporary saving (keep memory clear)
-tdir <- tempdir()
-# tdir <- "D:/Pierre/EUcityProj"
 
 # List of necessary packages
 packs <- c("dlnm", "dplyr", "data.table", "doSNOW", "arrow", "collapse")
@@ -46,7 +42,8 @@ st <- Sys.time()
 
 #----- Iterate on cities by chunks
 
-# Loop across chunks
+# Loop across SSPs and chunks
+for (issp in ssplist) {
 for (igrp in seq_len(max(cities$grp))) {
   
   cat(as.character(Sys.time()), "Start looping through chunk", igrp, "\n", 
@@ -59,41 +56,37 @@ for (igrp in seq_len(max(cities$grp))) {
   cl <- makeCluster(ncores)
   registerDoParallel(cl)
   
-  # Start looping through cities
-  res <- foreach(city = grpcities, .packages = packs) %dopar% {
+  # Start looping through cities and SSPs
+  dummy <- foreach(city = grpcities, .packages = packs) %dopar% 
+  {
     
     # For when the libraries are stored in a non-standard location
     .libPaths(libs)
     
     # Trace
-    cat(as.character(Sys.time()), as.character(city), "\n", 
-      file = "temp/attr.txt", append = T)
+    cat(as.character(Sys.time()), as.character(city), as.character(issp), 
+      "\n", file = "temp/attr.txt", append = T) |> try()
     
     #----- Load projection data
     
     # Load projections
     tmeanproj <- open_dataset("data/tmeanproj.gz.parquet") |>
-      filter(URAU_CODE == city) |> collect() |>
-      dplyr::select(!URAU_CODE)
+      filter(URAU_CODE == city & ssp %in% c("hist", issp)) |> 
+      select(!c(ssp, URAU_CODE)) |>
+      collect()
     
     # Create the projection data.table
     tmeandf <- merge(init_df, tmeanproj, all.x = T) |>
-      melt(id.vars = c("day", "month", "year", "year5", "ssp"), 
-        measure.vars = patterns("tas_"), variable.name = "gcm", 
-        value.name = "tas") |> 
-      setkey(ssp, gcm, year, month, day)
-    tmeandf[, gcm := gsub("tas_", "", gcm, fixed = T)]
-    
-    # Exclude some GCMs
-    tmeandf <- tmeandf[gcm %in% gcmlist,]
+      setkey(year, month, day)
     
     # Fill NAs for IITM_ESM in 2099 and SSP3
-    fillvals <- tmeandf[year == 2098 & gcm == "IITM_ESM" & ssp == 3, 
-      tas, drop = T]
-    tmeandf[year == 2099 & gcm == "IITM_ESM" & ssp == 3, tas := fillvals]
+    if (issp == 3){
+      fillvals <- tmeandf[year == 2098, tas_IITM_ESM, drop = T]
+      tmeandf[year == 2099, tas_IITM_ESM := fillvals]
+    }
     
-    # Reorder
-    setkey(tmeandf, year, month, day, ssp, gcm)
+    # Select GCMs
+    tmeandf[, sprintf("tas_%s", gcmexcl) := NULL]
     
     #----- Get the historical data
     
@@ -106,53 +99,65 @@ for (igrp in seq_len(max(cities$grp))) {
     # Extract quantiles before doing any any selection
     tper <- quantile(tmeanhist$tmeanobs, predper / 100)
     
-    # Keep only the defined historical period
-    tmeanhist <- merge(init_df[year %between% histrange,], tmeanhist)
-    
     # Add GCMs for historical period
-    tmeanhist <- merge(tmeanhist, tmeanproj, by = "date")
-    
-    # Extract month and year
-    setnames(tmeanhist, old = c("month", "year"), new = c("m", "y"))
+    tmeanhist <- merge(tmeanhist, tmeandf[year %between% histrange, ], 
+      by = "date", all.y = T)
     
     #----- Calibration of projections
     
+    # Melt data.table
+    tmeandf <- melt(tmeandf, 
+      id.vars = c("date", "year5", "year", "month", "day"), 
+      measure.vars = patterns("tas_"), variable.name = "gcm", 
+      value.name = "tas")
+    tmeandf[, gcm := gsub("tas_", "", gcm, fixed = T)]
+    
     # Create periods of calibration
-    tmeandf[, calperiod := cut(year, c(histrange[1], projrange), right = F)]
+    tmeandf[, calperiod := cut(year, c(histrange[1], projrange), right = F,
+      labels = c("hist", 
+        paste(projrange[-length(projrange)], projrange[-1] - 1, sep = "-")))]
+    setkey(tmeandf, calperiod, date, gcm)
+    
+    # Index of historical period
+    hind <- tmeandf$calperiod == "hist"
     
     # Calibrate projections: for full climate change
-    tmeandf[, full := isimip3(obshist = tmeanhist[m == month, tmeanobs],
-      simhist = tmeanhist[m == month, .SD[[1]], 
-        .SDcols = sprintf("tas_%s", gcm)],
+    tmeandf[, full := isimip3(
+      obshist = tmeanhist[month == .BY$month, tmeanobs],
+      simhist = tmeanhist[month == .BY$month, .SD, 
+        .SDcols = sprintf("tas_%s", .BY$gcm)][[1]],
       simfut = tas, 
-      yearobshist = tmeanhist[m == month, y], 
-      yearsimhist = tmeanhist[m == month, y], 
+      yearobshist = tmeanhist[month == .BY$month, year], 
+      yearsimhist = tmeanhist[month == .BY$month, year], 
       yearsimfut = year), 
-      by = .(month, calperiod, ssp, gcm)]
-    
+      by = .(month, calperiod, gcm)]
+      
     # Create the no climate change series 
     # Recalibrate each 5 y period on last 5y of historical period
-    tmeandf[, demo := isimip3(obshist = tmeandf[month == .BY$month & 
-        year5 == (min(projrange) - perlen) & gcm == .BY$gcm, full],
+    tmeandf[, demo := isimip3(
+      obshist = tmeandf[month == .BY$month & gcm == .BY$gcm & 
+        year5 == (min(projrange) - perlen), full],
       simhist = full, simfut = full, 
-      yearobshist = tmeandf[month == .BY$month & 
-          year5 == (min(projrange) - perlen) & gcm == .BY$gcm, year], 
+      yearobshist = tmeandf[month == .BY$month & gcm == .BY$gcm & 
+        year5 == (min(projrange) - perlen), year], 
       yearsimhist = year, yearsimfut = year), 
-      by = .(month, year5, ssp, gcm)]
+      by = .(month, year5, gcm)]
     
     #----- Export summary of temperature
     
-    # Summary of temperatures by period
-    tmeandf[, period := factor(ifelse(ssp == "hist", "hist", year5), 
-      levels = c("hist", unique(tmeandf$year5)))]
-    tsum <- tmeandf[, c(list(perc = predper), 
+    # Full distribution for historical period (to assess calibration)
+    tsumhist <- tmeandf[calperiod == "hist", c(list(perc = predper), 
         lapply(.SD, function(x) fquantile(x, predper / 100))),
-      by = .(period, gcm, ssp), .SDcols = c("tas", "full", "demo")]
-    tmeandf[, period := NULL]
+      .SDcols = c("tas", "full", "demo"),
+      by = gcm]
     
-    # Export
-    dir.create(sprintf("%s/tsum/%s", tdir, city), recursive = T)
-    write_parquet(tsum, sprintf("%s/tsum/%s/tsum.parquet", tdir, city))
+    # Reduced summary for other periods
+    redper <- c(0, 1, 25, 50, 75, 99, 100)
+    tsumproj <- tmeandf[calperiod != "hist", c(list(perc = c(redper, "mean")), 
+      lapply(.SD, function(x) 
+        c(fquantile(x, redper / 100), mean(x)))),
+      by = .(calperiod, gcm), 
+      .SDcols = c("tas", "full", "demo")]
     
     #----- Prepare ERFs 
     
@@ -166,286 +171,491 @@ for (igrp in seq_len(max(cities$grp))) {
     argvar <- list(fun = varfun, degree = vardegree, knots = varknots,
       Bound = varbound)
     
-    # Initialise the sum of age groups
-    ageagg <- NULL
-    
     # Loop on age groups
     for (a in agelabs){
       
-      # Extract coefficients
-      allcoefs <- rbind(
-        # Point estimate
-        subset(coefs, URAU_CODE == city & agegroup == a) |> 
-          select(matches("b[[:digit:]]")),
-        # Simulations (stored on disk)
-        open_dataset("data/coef_simu.gz.parquet") |>
-          filter(URAU_CODE == city & agegroup == a, sim <= nsim) |>
-          select(matches("b[[:digit:]]")) |>
-          collect()
-      )
-      allcoefs <- as.matrix(allcoefs) |> t()
+      #----- Load coefficients
+      
+      # Point estimate
+      ptcoef <- subset(coefs, URAU_CODE == city & agegroup == a) |> 
+        select(matches("b[[:digit:]]"))
+      
+      # Simulations (stored on disk)
+      simcoef <- open_dataset("data/coef_simu.gz.parquet") |>
+        filter(URAU_CODE == city & agegroup == a, sim <= nsim) |>
+        select(matches("b[[:digit:]]")) |>
+        collect()
+      
+      # Put together
+      allcoefs <- rbind(ptcoef, simcoef) |> t()
+      colnames(allcoefs) <- c("est", sprintf("sim%i", 1:nsim))
+      
+      #----- Prepare the basis
       
       # Evaluate MMT
       bper <- suppressWarnings(do.call(onebasis, c(list(x = tper), argvar)))
       ind <- tper %between% tper[c("25.0%", "99.0%")]
       mmt <- tper[ind][which.min(drop(bper[ind,] %*% allcoefs[,1]))]
       
-      # Extract death rate projections
-      agedf <- merge(tmeandf[, .(year, year5, ssp, gcm, full, demo)], 
-        projdata[URAU_CODE == city & agegroup == a, 
-          .(year5, ssp, death, pop)], by = c("year5", "ssp"), all.x = T)
-      
       # Create centred basis
       cenvec <- do.call(onebasis, c(list(x = mmt), argvar))
       
-      #----- Compute daily AN 
-      # Loop through GCMs and years with data.table
-      res <- agedf[, c(list(range = rep(c("heat", "cold"), each = nsim + 1), 
-        res = rep(c("est", sprintf("sim%i", 1:nsim)), 2), 
-        death = death[1], pop = pop[1]), 
-        lapply(.SD, function(x){
-          # Center basis
-          bcen <- do.call(onebasis, c(list(x = x), argvar)) |>
-            scale(center = cenvec, scale = F) |> 
-            suppressWarnings()
+      # Extract death rate projections
+      agedf <- merge(
+        tmeandf[, .(year, year5, gcm, full, demo)], 
+        projdata[URAU_CODE == city & agegroup == a & ssp %in% c("hist", issp), 
+          .(year5, death, pop)], 
+        by = c("year5"), all.x = T)
+      
+      # Melt for more efficient computation
+      agedf <- melt(agedf, measure.vars = c("full", "demo"), 
+        variable.name = "sc", value.name = "tas")
+      agedf[, range := factor(tas > mmt, lab = c("cold", "heat"))]
+      
+      # Extract adaptation scenarios and expand data
+      iadapt <- subset(adaptdf, ssp == issp, -ssp)
+      agedf <- apply(iadapt, 1, function(ada) 
+        cbind(agedf, adapt = ada["adapt"], 
+          adapt_fac = ada[as.character(agedf$range)])) |>
+        rbindlist()
+      agedf[, adapt_fac := as.numeric(adapt_fac)]
+      
+      #----- Compute annual AN
+      
+      # Compute total AN for each year, temp range and adaptation scenario
+      setkey(agedf, sc, range, year, adapt, gcm)
+      resy <- agedf[, .(pop = pop[1], death = death[1], 
+        res = c("est", sprintf("sim%i", 1:nsim)), an = {
           
-          # Daily AN contribution
+          # Compute RR
+          bcen <- do.call(onebasis, c(list(x = tas), argvar)) |>
+            scale(center = cenvec, scale = F) |> 
+            suppressWarnings()  
           rr <- pmax(exp(bcen %*% allcoefs), 1)
+          
+          # Adapt RR
+          rr <- 1 + (rr - 1) * (1 - adapt_fac / 100)
+          
+          # Compute AN
           an <- (1 - 1 / rr) * death / 365
           
-          # Sum all for the year
-          c(colSums(an[x > mmt,, drop = F]), colSums(an[x <= mmt,, drop = F]))
-        })), 
-        by = .(ssp, gcm, year), .SDcols = c("full", "demo")]
+          # Aggregate
+          colSums(an)
+          
+        }), by = c("sc", "range", "year", "adapt", "gcm")]
+      
+      # Fill missing years with zero
+      resy <- expand.grid(
+        c(lapply(agedf[, c("sc", "range", "year", "adapt", "gcm")], unique),
+          list(res = c("est", sprintf("sim%i", 1:nsim))))) |>
+        join(resy, how = "left") |>
+        as.data.table()
+      resy[, ":="(death = unique(na.omit(death)), 
+        pop = unique(na.omit(pop))), 
+        by = c("year")]
+      setnafill(resy, fill = 0, cols = "an")
       
       # Save in temporary directory
-      dir.create(sprintf("%s/loop/%s/%s", tdir, substr(city, 1, 2), a), 
+      dir.create(sprintf("%s/proj_loop/%s/%s", tdir, city, a), 
         recursive = T)
-      write_parquet(res, sprintf("%s/loop/%s/%s/%s.parquet", tdir, 
-        substr(city, 1, 2), a, city))
+      write_dataset(resy, sprintf("%s/proj_loop/%s/%s", tdir, 
+        city, a), partitioning = c("adapt"), hive_style = F)
       
-      # Compute impact
-      impres <- impact(res, perlen = perlen, warming_win = warming_win)
+      #----- Compute impacts
       
-      # Save impact
-      lapply(names(impres), function(nm){
-        dir.create(sprintf("%s/city_%s/%s/%s", tdir, nm, city, a), 
-          recursive = T)
-        write_parquet(impres[[nm]], 
-          sprintf("%s/city_%s/%s/%s/impact.parquet", tdir, nm, city, a))
-      })
+      # Total tmean range
+      resy <- impact_aggregate(resy, agg = c(range = "tot"), vars = "an",
+        by = c("sc", "year", "gcm", "range", "res", "adapt", "pop", "death"))
       
-      # Aggregate age groups
-      ageagg <- rbind(ageagg, res)[, lapply(.SD, sum), 
-        by = .(ssp, gcm, year, range, res), 
-        .SDcols = c("death", "pop", "full", "demo")]
+      # Compute part due to climate change
+      resy <- dcast(resy, range + year + adapt + res + gcm + death + pop ~ sc,
+        value.var = "an")
+      resy[, clim := full - demo]
       
-      rm(res)
+      # Compute impact measures and rename
+      resy <- impact_measures(resy, vars = c("full", "demo", "clim"),
+        by = c("year", "adapt", "gcm", "range", "res"))
+      setnames(resy, c("full", "demo", "clim"),
+        sprintf("an_%s", c("full", "demo", "clim")))
+      allvars <- lapply(c("full", "demo", "clim"), grep, names(resy),
+        value = T) |> unlist()
+      
+      # Aggregate by period
+      resy[, period := floor(year / perlen) * perlen]
+      periodres <- impact_summarise(resy, vars = allvars,
+        by = c("period", "adapt", "range"))
+      
+      # Aggregate by warming level
+      resy <- merge(resy, subset(warming_win, ssp == issp, -ssp),
+        by = c("gcm", "year"), allow.cartesian = T)
+      levelres <- impact_summarise(resy, vars = allvars,
+        by = c("level", "adapt", "range"))
+      
+      # Save impacts
+      idir <- sprintf("%s/proj_city_period/%s/%s/%s", 
+        tdir, city, issp, a)
+      dir.create(idir, recursive = T)
+      write_parquet(periodres, sprintf("%s/res.parquet", idir))
+      idir <- sprintf("%s/proj_city_level/%s/%s/%s", 
+        tdir, city, issp, a)
+      dir.create(idir, recursive = T)
+      write_parquet(levelres, sprintf("%s/res.parquet", idir))
+      rm(resy)
     }
     
-    # Compute impacts and return
-    allageres <- impact(ageagg, perlen = perlen, warming_win = warming_win)
+    # Export temp summary
+    dir.create(sprintf("%s/proj_tsum/%s/%s", tdir, city, issp), 
+      recursive = T)
+    rbind(tsumhist[, calperiod := "hist"], tsumproj) |>
+      write_parquet(sprintf("%s/proj_tsum/%s/%s/tsum.parquet", 
+        tdir, city, issp))
     
-    # Save impact
-    lapply(names(allageres), function(nm){
-      dir.create(sprintf("%s/city_%s/%s/all", tdir, nm, city), 
-        recursive = T)
-      write_parquet(allageres[[nm]], 
-        sprintf("%s/city_%s/%s/all/impact.parquet", tdir, nm, city))
-    })
+    #----- Impacts for all ages
+    
+    # Sum results for all ages
+    resa <- open_dataset(sprintf("%s/proj_loop/%s", tdir, city), 
+      partitioning = c("agegroup", "adapt")) |>
+      group_by(year, gcm, range, res, adapt, sc) |>
+      summarise(across(all_of(c("an", "pop", "death")), 
+        sum)) |>
+      ungroup() |>
+      collect() |> as.data.table()
+    
+    # Total tmean range
+    resa <- impact_aggregate(resa, agg = c(range = "tot"), vars = "an",
+      by = c("sc", "year", "gcm", "range", "res", "adapt", "pop", "death"))
+    
+    # Compute part due to climate change
+    resa <- dcast(resa, range + year + adapt + res + gcm + death + pop ~ sc,
+      value.var = "an")
+    resa[, clim := full - demo]
+    
+    # Compute impact measures and rename
+    resa <- impact_measures(resa, vars = c("full", "demo", "clim"),
+      by = c("year", "adapt", "gcm", "range", "res"))
+    setnames(resa, c("full", "demo", "clim"),
+      sprintf("an_%s", c("full", "demo", "clim")))
+    allvars <- lapply(c("full", "demo", "clim"), grep, names(resa),
+      value = T) |> unlist()
+    
+    # Aggregate by period
+    resa[, period := floor(year / perlen) * perlen]
+    periodres <- impact_summarise(resa, vars = allvars,
+      by = c("period", "adapt", "range"))
+    
+    # Aggregate by warming level
+    resa <- merge(resa, subset(warming_win, ssp == issp, -ssp),
+      by = c("gcm", "year"), allow.cartesian = T)
+    levelres <- impact_summarise(resa, vars = allvars,
+      by = c("level", "adapt", "range"))
+    
+    # Save impacts
+    idir <- sprintf("%s/proj_city_period/%s/%s/all", 
+      tdir, city, issp)
+    dir.create(idir, recursive = T)
+    write_parquet(periodres, sprintf("%s/res.parquet", idir))
+    idir <- sprintf("%s/proj_city_level/%s/%s/all", 
+      tdir, city, issp)
+    dir.create(idir, recursive = T)
+    write_parquet(levelres, sprintf("%s/res.parquet", idir))
+    rm(resa)
+      
+      
   } 
   
   stopCluster(cl)
+
   
   #----------------------
   # Aggregate impacts
   #----------------------
   
-  cat(as.character(Sys.time()), "Aggregate results for chunk", igrp, "\n", 
-    file = "temp/attr.txt", append = T)
+  #----- Country level
   
-  #----- Represented countries
+  cat(as.character(Sys.time()), "Aggregate country results for chunk", igrp, "\n", 
+    file = "temp/attr.txt", append = T)
   
   # Extract represented countries
   grpcntr <- subset(cities, grp == igrp) |> 
-    # Determine which city was the last in the chunk
     summarise(lastgrp = last(URAU_CODE), .by = CNTR_CODE) |>
-    # Check if the country is completed or not 
-    left_join(countries) |>
+    left_join(countries, by = "CNTR_CODE") |>
     mutate(complete = lastgrp == lastcity)
   
-  # Open dataset
-  grpds <- open_dataset(sprintf("%s/loop", tdir), 
-    partitioning = c("CNTR_CODE", "agegroup"))
+  # Prepare parallel
+  # cl <- makeCluster(ncores)
+  # registerDoParallel(cl)  
   
-  
-  #----- Aggregate by country
-  
-  # Loop over age group within countries, cumulate age groups
-  cntrres <- foreach(cntr = grpcntr$CNTR_CODE, comp = grpcntr$complete) %:%
-    foreach(a = agelabs, .combine = combres, 
-      .final = function(x) if (comp) allages(x,
-        lev = "country", lab = cntr,  perlen = perlen, 
-        warming_win = warming_win)) %do% 
+  # Loop over countries
+  dummy <- foreach(cntr = iter(grpcntr, by = "row"), .packages = packs) %:%
+    foreach(ada = subset(adaptdf, ssp == issp, adapt, drop = T), 
+      .packages = packs) %do% 
   {
-    
-    # Extract country and age group results and sum
-    cntrageres <- grpds |>
-      filter(CNTR_CODE == cntr & agegroup == a) |>
-      group_by(ssp, year, gcm, range, res) |>
-      summarise(across(all_of(c("death", "pop", "full", "demo")), sum)) |>
+  
+    # Extract country and adapt results and sum
+    cntrres <- open_dataset(sprintf("%s/proj_loop", tdir), 
+        partitioning = c("city", "agegroup", "adapt")) |>
+      filter(substr(city, 1, 2) == cntr$CNTR_CODE, adapt == ada) |>
+      group_by(year, gcm, range, agegroup, res, adapt, sc) |>
+      summarise(across(all_of(c("an", "pop", "death")), sum)) |>
       ungroup() |>
       collect() |> as.data.table()
     
+    # Export the aggregated country in temp directory
+    dir.create(sprintf("%s/proj_loop/%s", tdir, cntr$CNTR_CODE), 
+      recursive = T)
+    write_dataset(cntrres, sprintf("%s/proj_loop/%s", tdir, cntr$CNTR_CODE),
+      partitioning = c("agegroup", "adapt"),
+      hive_style = F)
+    
     # If the country is completed compute country level impacts
-    if (comp) {
+    if (cntr$comp) {
       
-      # Compute measures of impact by period and level
-      impres <- impact(cntrageres, perlen = perlen, warming_win = warming_win)
+      if (ada == subset(adaptdf, ssp == issp[1], adapt, drop = T)[1]) cat(
+          as.character(Sys.time()), "Aggregate country", cntr$CNTR_CODE, "\n", 
+          file = "temp/attr.txt", append = T)
       
-      # Output impact
-      lapply(names(impres), function(nm){
-        dir.create(sprintf("%s/country_%s/%s/%s", tdir, nm, cntr, a), 
-          recursive = T)
-        write_parquet(impres[[nm]], 
-          sprintf("%s/country_%s/%s/%s/impact.parquet", tdir, nm, cntr, a))
-      })
-    } else {
-      # if not completed, don't bother compute
-      impres <- NULL
-    }
-    
-    # Export the aggregated cities in temp directory
-    write_parquet(cntrageres, 
-      sprintf("%s/loop/%s/%s/agg.parquet", tdir, cntr, a))
-    
-    # Return to then aggregate age groups
-    cntrageres 
+      cntrres[, ":="(adapt = NULL)]
+      
+      # Total tmean range
+      cntrres <- impact_aggregate(cntrres, agg = c(agegroup = "all"), 
+        vars = c("an", "pop", "death"),
+        by = c("sc", "year", "gcm", "range", "res", "agegroup"))
+      cntrres <- impact_aggregate(cntrres, agg = c(range = "tot"), vars = "an",
+        by = c("sc", "year", "gcm", "range", "res", "agegroup", "pop", "death"))
+      
+      # Compute part due to climate change
+      cntrres <- dcast(cntrres, 
+        range + year + agegroup + res + gcm + death + pop ~ sc,
+        value.var = "an")
+      cntrres[, clim := full - demo]
+      
+      # Compute impact measures and rename
+      cntrres <- impact_measures(cntrres, vars = c("full", "demo", "clim"),
+        by = c("year", "agegroup", "gcm", "range", "res"))
+      setnames(cntrres, c("full", "demo", "clim"),
+        sprintf("an_%s", c("full", "demo", "clim")))
+      allvars <- lapply(c("full", "demo", "clim"), grep, names(cntrres),
+        value = T) |> unlist()
+      
+      # Aggregate by period
+      cntrres[, period := floor(year / perlen) * perlen]
+      periodres <- impact_summarise(cntrres, vars = allvars,
+        by = c("period", "agegroup", "range"))
+      
+      # Aggregate by warming level
+      cntrres <- merge(cntrres, subset(warming_win, ssp == issp, -ssp),
+        by = c("gcm", "year"), allow.cartesian = T)
+      levelres <- impact_summarise(cntrres, vars = allvars,
+        by = c("level", "agegroup", "range"))
+      
+      # Save impact
+      idir <- sprintf("%s/proj_country_period/%s/%s/%s", 
+        tdir, cntr$CNTR_CODE, issp, ada)
+      dir.create(idir, recursive = T)
+      write_parquet(periodres, sprintf("%s/res.parquet", idir))
+      idir <- sprintf("%s/proj_country_level/%s/%s/%s", 
+        tdir, cntr$CNTR_CODE, issp, ada)
+      dir.create(idir, recursive = T)
+      write_parquet(levelres, sprintf("%s/res.parquet", idir))
+      
+      rm(cntrres); gc()
+      NULL
+    } 
   }
   
-  #----- Erase all temporary city files
-  
-  # Files to erase
-  allf <- list.files(sprintf("%s/loop", tdir), recursive = T, full.names = T)
-  keepf <- grep("agg\\.parquet", allf, value = T)
-  delf <- setdiff(allf, keepf)
-
-  # Erase
-  unlink(delf, recursive = T)
+  # stopCluster(cl)
   
   #----- Aggregate region if relevant
+  
+  # Open dataset
+  grpds <- open_dataset(sprintf("%s/proj_loop", tdir), 
+    partitioning = c("city", "agegroup", "adapt"))
   
   # Regions that are finalised in the current chunk
   grpregs <- subset(regions, chg == igrp, region, drop = T)
   
-  # Reload dataset
-  regds <- open_dataset(sprintf("%s/loop", tdir), 
-    partitioning = c("CNTR_CODE", "agegroup"))
+  # Prepare parallel
+  # cl <- makeCluster(ncores)
+  # registerDoParallel(cl)  
   
-  for (reg in grpregs){
+  # Loop across regions to aggregate
+  dummy <- foreach(reg = grpregs, .packages = packs) %:%
+    foreach(ada = subset(adaptdf, ssp == issp, adapt, drop = T), 
+      .packages = packs) %do% 
+  {
+  
+    if (ada == subset(adaptdf, ssp == issp[1], adapt, drop = T)[1]) cat(
+          as.character(Sys.time()), "Aggregate region", reg, "\n", 
+          file = "temp/attr.txt", append = T)
+    
     # Extract relevant countries
     regcntr <- subset(countries, region %in% reg, CNTR_CODE, drop = T)
+      
+    # Extract country and age group results and sum
+    regres <- grpds |>
+      filter(city %in% regcntr, adapt == ada) |>
+      group_by(year, gcm, range, agegroup, res, sc) |>
+      summarise(across(all_of(c("an", "pop", "death")), sum)) |>
+      ungroup() |>
+      collect() |> as.data.table()
     
-    # Loop through ages
-    foreach(a = agelabs, .combine = combres, .final = function(x) allages(x,
-      lev = "region", lab = reg,  perlen = perlen, 
-      warming_win = warming_win)) %do% 
-    {
-      
-      # Extract country and age group results and sum
-      regageres <- regds |>
-        filter(CNTR_CODE %in% regcntr & agegroup == a) |>
-        group_by(ssp, year, gcm, range, res) |>
-        summarise(across(all_of(c("death", "pop", "full", "demo")), sum)) |>
-        ungroup() |>
-        collect() |> as.data.table()
-      
-      # Compute measures of impact by period and level
-      impres <- impact(regageres, perlen = perlen, warming_win = warming_win)
-        
-      # Output impact
-      lapply(names(impres), function(nm){
-        dir.create(sprintf("%s/region_%s/%s/%s", tdir, nm, reg, a), 
-          recursive = T)
-        write_parquet(impres[[nm]], 
-          sprintf("%s/region_%s/%s/%s/impact.parquet", tdir, nm, reg, a))
-      })
-      
-      # Export the aggregated cities in temp directory
-      dir.create(sprintf("%s/loopreg/%s/%s", tdir, reg, a), recursive = T)
-      write_parquet(regageres, 
-        sprintf("%s/loopreg/%s/%s/res.parquet", tdir, reg, a))
-      
-      # Return to then aggregate age groups
-      regageres 
-    }
+    # Export the aggregated country in temp directory
+    dir.create(sprintf("%s/proj_reg/%s/%s/%s", tdir, reg, issp, ada), 
+      recursive = T)
+    write_parquet(regres, sprintf("%s/proj_reg/%s/%s/%s/an.parquet", 
+      tdir, reg, issp, ada))
     
-    # Erase results for countries of this region
-    deld <- sprintf("%s/loop/%s", tdir, regcntr)
-    unlink(deld, recursive = T)
+    # Total tmean range
+    regres <- impact_aggregate(regres, agg = c(agegroup = "all"), 
+      vars = c("an", "pop", "death"),
+      by = c("sc", "year", "gcm", "range", "res", "agegroup"))
+    regres <- impact_aggregate(regres, agg = c(range = "tot"), vars = "an",
+      by = c("sc", "year", "gcm", "range", "res", "agegroup", "pop", "death"))
+    
+    # Compute part due to climate change
+    regres <- dcast(regres, 
+      range + year + agegroup + res + gcm + death + pop ~ sc,
+      value.var = "an")
+    regres[, clim := full - demo]
+    
+    # Compute impact measures and rename
+    regres <- impact_measures(regres, vars = c("full", "demo", "clim"),
+      by = c("year", "agegroup", "gcm", "range", "res"))
+    setnames(regres, c("full", "demo", "clim"),
+      sprintf("an_%s", c("full", "demo", "clim")))
+    allvars <- lapply(c("full", "demo", "clim"), grep, names(regres),
+      value = T) |> unlist()
+    
+    # Aggregate by period
+    regres[, period := floor(year / perlen) * perlen]
+    periodres <- impact_summarise(regres, vars = allvars,
+      by = c("period", "agegroup", "range"))
+    
+    # Aggregate by warming level
+    regres <- merge(regres, subset(warming_win, ssp == issp, -ssp),
+      by = c("gcm", "year"), allow.cartesian = T)
+    levelres <- impact_summarise(regres, vars = allvars,
+      by = c("level", "agegroup", "range"))
+      
+    # Save impact
+    idir <- sprintf("%s/proj_region_period/%s/%s/%s", 
+      tdir, reg, issp, ada)
+    dir.create(idir, recursive = T)
+    write_parquet(periodres, sprintf("%s/res.parquet", idir))
+    idir <- sprintf("%s/proj_region_level/%s/%s/%s", 
+      tdir, reg, issp, ada)
+    dir.create(idir, recursive = T)
+    write_parquet(levelres, sprintf("%s/res.parquet", idir))
+    
+    rm(regres); gc()
+    NULL
   }
-}
+  
+  # stopCluster(cl)
+  
+  #----- Erase all temporary city/country files
+  
+  # Files to erase
+  allf <- list.files(sprintf("%s/proj_loop", tdir))
+  delf <- allf %in% c(as.character(grpcities), 
+    subset(countries, region %in% grpregs, CNTR_CODE, drop = T))
+  
+  # Erase
+  unlink(sprintf("%s/proj_loop/%s", tdir, allf[delf]), recursive = T)
+}}
+
 
 #-----------------------
-# Aggregate EU level
+# Tidy up everything
 #-----------------------
+
+#----- Compute EU level results
+
+cat(as.character(Sys.time()), "Aggregate EU\n", 
+  file = "temp/attr.txt", append = T)
 
 # Open dataset
-euds <- open_dataset(sprintf("%s/loopreg", tdir), 
-  partitioning = c("region", "agegroup"))
+euds <- open_dataset(sprintf("%s/proj_reg", tdir), 
+  partitioning = c("region", "ssp", "adapt"))
 
-# Loop through age groups
-euageres <- foreach(a = agelabs, 
-  .combine = function(x1, x2) Map(rbind, x1, x2)) %do% 
+# Loop across SSP
+euimpres <- foreach(issp = ssplist, 
+    .combine = function(x, y) Map(rbind, x, y)) %:%
+  foreach(ada = subset(adaptdf, ssp == issp, adapt, drop = T), 
+    .combine = function(x, y) Map(rbind, x, y)) %do% 
 {
-  
-  # Extract country and age group results and sum
-  ageres <- euds |>
-    filter(agegroup == a) |>
-    group_by(ssp, year, gcm, range, res) |>
-    summarise(across(all_of(c("death", "pop", "full", "demo")), sum)) |>
+  # Get regional results and sum
+  eures <- euds |>
+    filter(ssp == issp, adapt == ada) |>
+    group_by(year, gcm, range, agegroup, res, sc) |>
+    summarise(across(all_of(c("an", "pop", "death")), sum)) |>
     ungroup() |>
     collect() |> as.data.table()
   
-  # Compute measures of impact by period and level
-  impres <- impact(ageres, perlen = perlen, warming_win = warming_win)
-  lapply(impres, function(x) x[,":="(agegroup = a, gcm = "ens")])
+  # Total tmean range
+  eures <- impact_aggregate(eures, agg = c(agegroup = "all"), 
+    vars = c("an", "pop", "death"),
+    by = c("sc", "year", "gcm", "range", "res", "agegroup"))
+  eures <- impact_aggregate(eures, agg = c(range = "tot"), vars = "an",
+    by = c("sc", "year", "gcm", "range", "res", "agegroup", "pop", "death"))
+  
+  # Compute part due to climate change
+  eures <- dcast(eures, 
+    range + year + agegroup + res + gcm + death + pop ~ sc,
+    value.var = "an")
+  eures[, clim := full - demo]
+  
+  # Compute impact measures and rename
+  eures <- impact_measures(eures, vars = c("full", "demo", "clim"),
+    by = c("year", "agegroup", "gcm", "range", "res"))
+  setnames(eures, c("full", "demo", "clim"),
+    sprintf("an_%s", c("full", "demo", "clim")))
+  allvars <- lapply(c("full", "demo", "clim"), grep, names(eures),
+    value = T) |> unlist()
+  
+  # Aggregate by period
+  eures[, period := floor(year / perlen) * perlen]
+  periodres <- impact_summarise(eures, vars = allvars,
+    by = c("period", "agegroup", "range"))
+  gcmres <- impact_summarise(eures, vars = allvars,
+    by = c("period", "agegroup", "range", "gcm"))
+  periodres <- rbind(periodres[, gcm := "ens"], gcmres)
+  
+  # Aggregate by warming level
+  eures <- merge(eures, subset(warming_win, ssp == issp, -ssp),
+    by = c("gcm", "year"), allow.cartesian = T)
+  levelres <- impact_summarise(eures, vars = allvars,
+    by = c("level", "agegroup", "range"))
+  gcmres <- impact_summarise(eures, vars = allvars,
+    by = c("level", "agegroup", "range", "gcm"))
+  levelres <- rbind(levelres[, gcm := "ens"], gcmres)
+  
+  # Melt and return
+  lapply(list(period = periodres, level = levelres), 
+    function(x) cbind(x, ssp = issp, adapt = ada))
 }
+names(euimpres) <- sprintf("eu_%s", names(euimpres))
 
-# Extract all ages for EU
-eures <- euds |>
-  group_by(ssp, year, gcm, range, res) |>
-  summarise(across(all_of(c("death", "pop", "full", "demo")), sum)) |>
-  ungroup() |>
-  collect() |> as.data.table()
+#----- Put together results from lower levels
 
-# Compute impacts for all ages (including all GCMs)
-alleu <- impact(eures, perlen = perlen, warming_win = warming_win, ensonly = F)
-alleu <- lapply(alleu, function(x) x[,":="(agegroup = "all")])
-
-# Put together
-alleu <- Map(rbind, euageres, alleu)
-names(alleu) <- sprintf("eu_%s", names(alleu))
-
-#--------------------------
-# Reorganise results
-#--------------------------
-
-#----- Read city, country and region results
-
-# List of folders
-reslist <- expand.grid(c("city", "country", "region"), c("period", "level")) 
-nmlist <- apply(reslist, 1, paste, collapse = "_")
-dirlist <- sprintf("%s/%s", tdir, nmlist)
-
-# Read all results
-finalres <- Map(function(d, lev) open_dataset(d, 
-  partitioning = c(lev, "agegroup")) |> collect(),
-  dirlist, as.character(reslist[[1]]))
-names(finalres) <- nmlist
+# Load all results
+finalres <- list(
+  city_period = open_dataset(sprintf("%s/proj_city_period", tdir), 
+    partitioning = c("city", "ssp", "agegroup")) |> collect(),
+  city_level = open_dataset(sprintf("%s/proj_city_level", tdir), 
+    partitioning = c("city", "ssp", "agegroup")) |> collect(),
+  country_period = open_dataset(sprintf("%s/proj_country_period", tdir), 
+    partitioning = c("country", "ssp", "adapt")) |> collect(),
+  country_level = open_dataset(sprintf("%s/proj_country_level", tdir), 
+    partitioning = c("country", "ssp", "adapt")) |> collect(),
+  region_period = open_dataset(sprintf("%s/proj_region_period", tdir), 
+    partitioning = c("region", "ssp", "adapt")) |> collect(),
+  region_level = open_dataset(sprintf("%s/proj_region_level", tdir), 
+    partitioning = c("region", "ssp", "adapt")) |> collect()
+)
 
 # Add the EU level
-finalres <- c(finalres, alleu)
+finalres <- c(finalres, euimpres)
 
 #----- Pivot the sub-scenario
 
@@ -465,22 +675,6 @@ finalres <- lapply(finalres, melt, measure.vars = measvar, variable.name = "sc")
 sclist <- str_split_i(measvar[[1]], "_", 2)
 finalres <- lapply(finalres, function(x) x[, sc := sclist[sc]])
 
-#----- Expand historical period for easier plotting later
-
-# Period elements
-perres <- grep("period", names(finalres))
-
-# Extract historical period and expand
-histpers <- lapply(finalres[perres], function(x){
-  his <- x[ssp == "hist",]
-  hisexp <- lapply(ssplist, function(issp) copy(his)[, ssp := issp])
-  rbindlist(hisexp)
-})
-
-# Remove historical period and add the expanded one
-finalres[perres] <- lapply(finalres[perres], function(x) x[ssp != "hist",])
-finalres[perres] <- Map(rbind, histpers, finalres[perres])
-
 #----- Save results
 
 # Results directory
@@ -490,20 +684,20 @@ dir.create(resdir)
 # Export everything
 lapply(names(finalres), function(nm) {
   write_parquet(finalres[[nm]], sprintf("%s/%s.parquet", resdir, nm))
-})
+}) |> invisible()
 
 # Delete all created temporary files
-unlink(sprintf("%s/%s", tdir, c("loop", "loopreg")), recursive = T)
+unlink(sprintf("%s/%s", tdir, c("proj_loop", "proj_reg")), recursive = T)
 unlink(dirlist, recursive = T)
 
 #----- Put together temperature summaries and copy to result
 
 # Read temperature summaries and write
-open_dataset(sprintf("%s/tsum", tdir), partitioning = c("city")) |>
+open_dataset(sprintf("%s/proj_tsum", tdir), partitioning = c("city", "ssp")) |>
   write_dataset(resdir, basename_template = "tsum{i}.parquet")
 
 # Erase temporary files
-list.files(sprintf("%s/tsum", tdir), include.dirs = T, full.names = T) |>
+list.files(sprintf("%s/proj_tsum", tdir), include.dirs = T, full.names = T) |>
   unlink(recursive = T)
 
 #----- The end

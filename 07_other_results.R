@@ -23,7 +23,8 @@ finalres$eu_period[agegroup == "all" & sc == "clim" &
 # Cumulative numbers
 finalres$eu_period[agegroup == "all" & sc == "clim" & 
     gcm == "ens" & range == "tot" & ssp %in% ssplist & period == max(period),
-  .(ssp, an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", cuman_est, cuman_low, 
+  .(ssp, adapt, 
+    an = sprintf("%.0f (95%%eCI: %.0f to %.0f)", cuman_est, cuman_low, 
     cuman_high))]
 
 # Death rates by warming level
@@ -79,6 +80,16 @@ finalres$eu_period[agegroup == "all" & sc == "full" & gcm == "ens" &
 cntraf <- finalres$country_period[agegroup == "all" & sc == "full" &
     range == "tot" & ssp %in% ssplist & period == max(period),
   .(country, ssp, af_est, af_low, af_high)]
+
+#----- Adaptation by region
+# 
+# finalres$country_period[period == 2095 & agegroup == "all" & range == "tot" &
+#     sc == "clim", 
+#   paste(country[rate_est > 0], collapse = ", "), by = c("ssp", "adapt")]
+# 
+# finalres$region_period[
+#   period == max(period) & agegroup == "all" & range == "tot" & sc == "clim",
+#   .(ssp, adapt, region, rate_est * byrate, cuman_est)]
 
 #--------------------------
 # Export results for Visualization

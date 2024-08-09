@@ -5,7 +5,7 @@
 #
 ################################################################################
 
-if(length(ls()) == 0){
+if (length(ls()) == 0){
   source("01_pkg_params.R")
   source("02_prep_data.R")
   
@@ -13,7 +13,7 @@ if(length(ls()) == 0){
   nmlist <- expand.grid(c("city", "country", "region", "eu"), 
       c("period", "level")) |>
     apply(1, paste, collapse = "_")
-  resdir <- "results/2024-02-25_1000"
+  resdir <- "results/2024-08-06_100"
   flist <- sprintf("%s/%s.parquet", resdir, nmlist)
   
   # Read all results
@@ -30,8 +30,9 @@ if(length(ls()) == 0){
 # Selected period
 pertab <- c(2050, 2095)
 
-# Selected SSP for warming levels
+# Selected scenario for warming levels
 ssptab <- 3
+adatab <- "0%"
 
 #----- Select data
 
@@ -41,7 +42,7 @@ tablab <- "country_rates"
 # Get country-level data by period
 bigtabdata <- finalres$country_period |> 
   subset(agegroup == "all" & sc == "clim" & ssp %in% ssptab & 
-      period %in% pertab)
+      adapt %in% adatab & period %in% pertab)
 
 # Add info about countries
 cntr_info <- group_by(cities, CNTR_CODE) |> 
@@ -53,13 +54,13 @@ bigtabdata <- merge(bigtabdata, cntr_info, by.x = "country", by.y = "CNTR_CODE")
 # Select regional totals
 regper <- finalres$region_period |> 
   subset(agegroup == "all" & sc == "clim" & ssp %in% ssptab & 
-      period %in% pertab) |> 
+      adapt %in% adatab & period %in% pertab) |> 
   mutate(lat = -Inf, country = region, cntr_name = as.character(region))
 
 # Select European totals
 euper <- finalres$eu_period |> 
   subset(agegroup == "all" & sc == "clim" & ssp %in% ssptab & 
-      period %in% pertab & gcm == "ens") |>
+      adapt %in% adatab & period %in% pertab & gcm == "ens") |>
   mutate(country = "Total", lat = -Inf, gcm = NULL, region = "", 
     cntr_name = "Total")
 
@@ -72,7 +73,7 @@ bigtabdata <- rbind(bigtabdata, regper, euper)
 bigtabdata <- mutate(bigtabdata, 
   measure = sprintf("%.1f\n(%.1f to %.1f)", 
     rate_est * byrate, rate_low * byrate, rate_high * byrate),
-  range = rnglabs[range])
+  range = factor(range, levels = names(rnglabs), labels = rnglabs))
 
 # Pivot period to wide
 bigtab <- pivot_wider(bigtabdata, 

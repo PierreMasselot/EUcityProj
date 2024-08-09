@@ -11,7 +11,7 @@
 
 # Select all ages and clim only scenario for european wide
 plottrends <- finalres$eu_period[agegroup == "all" & sc == "clim" &
-    ssp %in% ssplist & gcm == "ens",]
+    ssp %in% ssplist & gcm == "ens" & adapt == "0%",]
 
 # Multiply rates by the denominator
 ratevars <- grep("rate", colnames(plottrends), value = T)
@@ -20,7 +20,7 @@ plottrends[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 # Compute the warming level windows frequency
 winfreq <- warming_win[gcm %in% gcmlist, .(n = length(gcm)), 
   by = .(level, ssp, year)]
-winfreq[, prop := n / length(gcmlist)]
+winfreq[, ":="(prop = n / length(gcmlist), ssp = as.numeric(ssp))]
 
 #----- Plot parameters
 
@@ -47,8 +47,7 @@ figlayout <- ggplot(plottrends) +
   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
   labs(x = "", y = sprintf("Excess death rate (x%s)", 
       formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
-  scale_x_continuous(limits = c(min(plottrends$period), 2100), 
-    expand = rep(0, 2)) +
+  scale_x_continuous(limits = c(min(plottrends$period), 2100)) +
   coord_cartesian(clip = "off")
 
 # Add warming windows
@@ -73,8 +72,12 @@ trendlines <- figlayout +
   new_scale("fill") + 
   geom_ribbon(aes(x = period, ymin = rate_low, ymax = rate_high, fill = range,
     group = range), col = NA, alpha = .1) + 
-  geom_line(aes(x = period, y = rate_est, group = range, col = range), 
-    linewidth = 1) + 
+  # geom_line(aes(x = period, y = rate_est, group = range, col = range), 
+  #   linewidth = 1) + 
+  # geom_point(aes(x = period, y = rate_est, group = range, col = range),
+  #   shape = 21) + 
+  geom_pointpath(aes(x = period, y = rate_est, group = range, col = range), 
+    linesize = .5) +
   scale_color_manual(values = rngpal, labels = rnglabs, name = "") + 
   scale_fill_manual(values = rngpal, labels = rnglabs, name = "")
 
@@ -90,7 +93,7 @@ ggsave("figures/Fig1_EUlevel.pdf", trendlines, width = 12)
 
 # Select countries, all ages and difference full-demo sub-scenario and net
 plotcntr <- finalres$country_level[agegroup == "all" & sc == "clim" &
-    ssp == 3,]
+    ssp == 3 & adapt == "0%",]
 
 # Add info about countries
 cntr_info <- group_by(cities, CNTR_CODE) |> 
@@ -99,9 +102,9 @@ plotcntr <- merge(plotcntr, cntr_info, by.x = "country", by.y = "CNTR_CODE")
 
 # Select regional and european level data
 plotreg <- finalres$region_level[agegroup == "all" & sc == "clim" &
-    ssp == 3,]
+    ssp == 3 & adapt == "0%",]
 ploteu <- finalres$eu_level[agegroup == "all" & sc == "clim" &
-    ssp == 3 & gcm == "ens",]
+    ssp == 3 & gcm == "ens" & adapt == "0%",]
 
 # Multiply rates by the denominator
 ratevars <- grep("rate", colnames(plotcntr), value = T)
@@ -183,7 +186,7 @@ ggsave("figures/Fig2_countries.pdf", figforest, height = 8, width = 15)
 
 # All age group and net effect
 plotmap <- finalres$city_level[agegroup == "all" & sc == "clim" & 
-    ssp == 3 & range == "tot", ]
+    ssp == 3 & range == "tot" & adapt == "0%", ]
 
 # Add geographical info
 plotmap <- merge(plotmap, cities[, c("URAU_CODE", "lon", "lat", "pop")],
@@ -232,7 +235,6 @@ mapfig <- mapfig +
     shape = 21, stroke = .01, col = "black", alpha = .8) +
   # geom_point(aes(x = lon, y = lat, fill = colgrp, size = pop, col = colgrp), 
   #   shape = 21, stroke = .01) +
-  scale_color_manual(values = bpal) +
   scale_fill_manual(values = pal) +
   scale_size(range = c(1, 10), breaks = c(0.1, 0.5, 3, 7.5) * 10^6,
     labels = ~ number(./10^6)) +
@@ -243,10 +245,7 @@ mapfig <- mapfig +
       formatC(byrate, format = "f", digits = 0, big.mark = ","))) +
   guides(size = guide_legend(override.aes = list(col = 1)),
     # fill = guide_colorsteps(barwidth = 15, barheight = .5),
-    colour = guide_bins(override.aes = list(size = 5), axis = F, 
-      direction = "horizontal", nrow = 1, label.position = "bottom"),
-    fill = guide_bins(override.aes = list(size = 5), axis = F, 
-      direction = "horizontal", nrow = 1, label.position = "bottom"))
+    fill = guide_bins(override.aes = list(size = 5), direction = "horizontal"))
 
 # # Legend
 # dfleg <- data.frame(x = seq_along(pal), col = names(pal), 
@@ -260,3 +259,118 @@ mapfig <- mapfig +
 # Save plot
 ggsave("figures/Fig3_cityMaps.pdf", plot = mapfig, width = 13, height = 10)
 
+
+#-------------------------
+# Figure 4: Adaptation
+#-------------------------
+
+#----- Select data
+
+# Which SSPs have several adaption scenarios
+sspada <- subset(adaptdf, heat != 0 | cold != 0, ssp, drop = T) |>
+  unique()
+
+# Select only net effect
+adadata <- finalres$eu_period[agegroup == "all" & sc == "clim" &
+    ssp %in% sspada & gcm == "ens" & range == "tot",]
+adadata[, adapt := factor(adapt)]
+
+# Multiply rates by the denominator
+ratevars <- grep("rate", colnames(adadata), value = T)
+adadata[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
+
+#----- Prepare plot
+
+# Y-axis breaks
+yran <- range(adadata[,c("rate_high", "rate_low")])
+ybr <- pretty(yran, n = 10)
+ybr <- ybr[ybr %between% yran]
+
+# X-axis limits
+xlm <- c(min(adadata$period), 2100)
+
+#----- Plot
+
+# Plot layout and theme
+figadapt <- ggplot(adadata) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  geom_hline(yintercept = 0) + 
+  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
+  labs(x = "", y = sprintf("Excess death rate (x%s)", 
+    formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
+  scale_x_continuous(limits = xlm) +
+  coord_cartesian(clip = "off")
+
+# Draw trends as lines with ribbon CIs
+figadapt <- figadapt + 
+  geom_ribbon(aes(x = period, ymin = rate_low, ymax = rate_high, fill = adapt,
+    group = adapt), col = NA, alpha = .1) + 
+  geom_pointpath(aes(x = period, y = rate_est, group = adapt, col = adapt), 
+    linesize = .5) +
+  scale_color_manual(values = adapal, name = "Adaptation scenario") +
+  scale_fill_manual(values = adapal, name = "Adaptation scenario")
+
+# Export
+ggsave("figures/Fig4_adapt.pdf", figadapt, width = 12)
+
+
+#-------------------------
+# Figure 5: Adaptation by region
+#-------------------------
+# 
+# #----- Extract data
+# 
+# # Select only net effect
+# adaregion <- finalres$region_level[agegroup == "all" & sc == "clim" &
+#     ssp %in% sspada & range == "tot" & ssp == 3,]
+# adaregion[, ":="(adapt = factor(adapt), region = factor(region, names(regpal)))]
+# 
+# # Multiply rates by the denominator
+# ratevars <- grep("rate", colnames(adaregion), value = T)
+# adaregion[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
+# 
+# #----- Plot
+# 
+# # Plot layout and theme
+# figreg <- ggplot(adaregion) + 
+#   theme_classic() + 
+#   theme(panel.grid.major.y = element_line(colour = grey(.9), linewidth = .01),
+#     panel.border = element_rect(fill = NA), 
+#     axis.ticks.x = element_blank(),
+#     strip.text = element_markdown(face = "bold", size = 13),
+#     strip.background = element_rect(colour = NA, fill = NA)) + 
+#   facet_grid(rows = vars(region), #cols = vars(adapt), 
+#     labeller = labeller(ssp = ssplabs)) +
+#   geom_hline(yintercept = 0) + 
+#   labs(x = "", y = sprintf("Excess death rate (x%s)", 
+#     formatC(byrate, format = "f", digits = 0, big.mark = ",")), 
+#     color = "", fill = "")
+# 
+# # Add Net points
+# figreg <- figreg + 
+#   geom_pointpath(aes(x = as.numeric(level), y = rate_est, ymin = rate_low, 
+#     ymax = rate_high, col = adapt, group = adapt), linesize = .5,
+#     position = position_dodge(width = .1)) + 
+#   geom_linerange(aes(x = as.numeric(level), y = rate_est, ymin = rate_low, 
+#     ymax = rate_high, col = adapt, group = adapt),
+#     position = position_dodge(width = .1)) +
+#   scale_color_manual(values = adapal, name = "Heat adaptation rate") + 
+#   scale_x_continuous(breaks = as.numeric(names(levellabs)), labels = levellabs) +
+#   scale_y_continuous(n.breaks = 6)
+# 
+# # figreg + 
+# #   geom_ribbon(aes(x = as.numeric(level), ymin = rate_low, ymax = rate_high, 
+# #     fill = adapt, group = adapt), col = NA, alpha = .1) +
+# #   geom_pointpath(aes(x = as.numeric(level), y = rate_est, 
+# #     col = adapt, group = adapt)) + 
+# #   scale_color_manual(values = adapal, name = "Heat adaptation rate") + 
+# #   scale_fill_manual(values = adapal, name = "Heat adaptation rate")
+# 
+# # Export
+# ggsave("figures/Fig5_adaptRegion.pdf", figreg, height = 9)

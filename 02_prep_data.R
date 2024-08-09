@@ -149,5 +149,4 @@ warming_win <- group_by(warming_years, gcm, level, ssp) |>
 # Final tidying
 
 # Load European map data
-euromap <- gisco_get_countries(year = "2020")
-
+euromap <- gisco_get_countries(year = "2020", cache_dir = "temp/euromap")

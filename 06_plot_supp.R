@@ -16,9 +16,10 @@ fignm <- "SupFig"
 
 # Load only historical temperature summaries
 tsumhist <- open_dataset(sprintf("%s/tsum0.parquet", resdir)) |>
-  filter(period == "hist") |>
-  select(!c(period, ssp)) |>
+  filter(calperiod == "hist") |>
+  select(!c(calperiod, ssp)) |>
   collect()
+tsumhist$perc <- as.numeric(tsumhist$perc)
 
 # Load observed and compute quantiles
 tsumobs <- read_parquet("data/era5series.gz.parquet") |>
@@ -32,7 +33,8 @@ tsumhist <- merge(tsumhist, tsumobs, by.x = c("city", "perc"),
 
 # Compute RMSEs and pivot
 tcalib <- tsumhist[,
-  .(Original = sqrt(mean((obs - tas)^2)), Calibrated = sqrt(mean((obs - full)^2))),
+  .(Original = sqrt(mean((obs - tas)^2)), 
+    Calibrated = sqrt(mean((obs - full)^2))),
   by = .(city, gcm)]
 tcalib <- melt(tcalib, id.vars = c("city", "gcm"), 
   measure.vars = c("Original", "Calibrated"), 
@@ -55,31 +57,19 @@ ggplot(tcalib) +
 # Save
 ggsave(sprintf("figures/%s%i_calibration.png", fignm, figcount <- figcount + 1))
 
-
 #----- GCM projections
 
 # Compute city and period average temperature
-tavecity <- lapply(cities$URAU_CODE, function(cit){
-  open_dataset(sprintf("%s/tsum0.parquet", resdir)) |> 
-    filter(city == cit) |> collect() |>
-  summarise(tmean = weighted.mean(full[-n()] + diff(full) / 2, diff(perc)),
-    .by = c("period", "ssp", "gcm", "city"))
-})
-tavecity <- rbindlist(tavecity)
+tavecity <- open_dataset(sprintf("%s/tsum0.parquet", resdir)) |> 
+  filter(perc == "mean") |> 
+  select(calperiod, gcm, ssp, city, tmean = full) |>
+  collect()
 
 # Average for EU
-taveeu <- tavecity[, .(tmean = mean(tmean)), by = c("period", "ssp", "gcm")]
-
-# Replicate historical part for each SSP
-tavehist <- subset(taveeu, ssp == "hist") |>
-  mutate(period = min(projrange) - perlen)
-tavehist <- lapply(ssplist, function(issp) mutate(tavehist, ssp = issp)) |> 
-  rbindlist()
-taveeu <- rbind(tavehist, subset(taveeu, ssp != "hist")) |>
-  mutate(period = as.numeric(as.character(period)))
+taveeu <- tavecity[, .(tmean = mean(tmean)), by = c("calperiod", "ssp", "gcm")]
 
 # Plot layout and theme
-figgcm <- ggplot(taveeu) +
+ggplot(taveeu) +
   theme_classic() + 
   theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
     panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
@@ -87,34 +77,31 @@ figgcm <- ggplot(taveeu) +
     panel.background = element_rect(fill = NA),
     strip.text = element_text(face = "bold"),
     axis.title = element_text(face = "bold"),
+    axis.text.x.bottom = element_text(angle = -45, vjust = 1, hjust = 0),
     strip.background = element_rect(colour = NA, fill = NA)) + 
   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
-  labs(x = "Year", y = "Annual mean temperature")
-
-# Plot GCM projections
-figgcm <- figgcm + 
-  geom_line(aes(x = period, y = tmean, col = gcm, linetype = gcm)) + 
+  labs(x = "Year", y = "Annual mean temperature") + 
+  geom_line(aes(x = calperiod, y = tmean, col = gcm, 
+    linetype = gcm, group = gcm)) + 
   scale_color_manual(values = gcmpal, name = "GCM") + 
   scale_linetype_manual(values = gcmlntp, name = "GCM")
 
 # Save plot
 ggsave(sprintf("figures/%s%i_GCMtmean.png", fignm, figcount <- figcount + 1), 
-  figgcm, width = 10)
+  width = 10)
 
 
 #----- Average warming by city
 
 # Extract calibrated series (last 5y period)
 citytsum <- open_dataset(sprintf("%s/tsum0.parquet", resdir)) |>
-  filter(perc == 50 & period %in% 
-      c("hist", max(finalres$city_period$period))) |>
-  collect()
-
-citytsum <- tavecity[period %in% c("hist", max(finalres$city_period$period)),]
+  filter(perc == "50") |>
+  collect() |>
+  filter(calperiod %in% c("hist", tail(levels(calperiod), 1)))
 
 # Compute difference of period median for each city and average across GCM
 citytsum <- citytsum[, .(ssp = ssplist, 
-    tdiff = .SD[ssp != "hist", tmean] - .SD[ssp == "hist", tmean]), 
+    tdiff = .SD[calperiod != "hist", full] - .SD[calperiod == "hist", full]), 
   by = .(city, gcm)]
 citytsum <- citytsum[, .(tdiff = mean(tdiff)), by = .(city, ssp)]
 
@@ -174,7 +161,9 @@ ggsave(sprintf("figures/%s%i_GCMlevels.png", fignm, figcount <- figcount + 1),
 
 # Compute average tmean for each warming level
 tavelevel <- data.frame(year = seq(min(projrange) - perlen, max(projrange))) |>
-  mutate(period = floor(year / perlen) * perlen) |> 
+  mutate(calperiod = cut(year, c(histrange[1], projrange), right = F,
+    labels = c("hist", 
+      paste(projrange[-length(projrange)], projrange[-1] - 1, sep = "-")))) |> 
   merge(taveeu, allow.cartesian = T) |>
   merge(warming_win, by = c("gcm", "year", "ssp"), all.x = T, 
     allow.cartesian = T)
@@ -193,11 +182,12 @@ figperiod <- ggplot(taveeu) +
     panel.background = element_rect(fill = NA),
     strip.text = element_text(face = "bold"),
     axis.title = element_text(face = "bold"),
+    axis.text.x.bottom = element_text(angle = -45, vjust = 1, hjust = 0),
     strip.background = element_rect(colour = NA, fill = NA)) + 
   facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs), ncol = 1) + 
   labs(y = "Mean temperature") + 
   coord_cartesian(ylim = ylim) +
-  stat_interval(aes(x = period, y = tmean), .width = c(.5, .8, .95, 1)) + 
+  stat_interval(aes(x = calperiod, y = tmean), .width = c(.5, .8, .95, 1)) + 
   scale_color_discrete(type = scico(4, palette = "batlow", direction = -1), 
     labels = function(x) paste0(as.numeric(x)*100, "%"),
     name = "") +
@@ -320,7 +310,8 @@ ggplot(eustruct) +
   coord_cartesian(expand = F)
 
 # Save
-ggsave(sprintf("figures/%s%i_structproj.png", fignm, figcount <- figcount + 1))
+ggsave(sprintf("figures/%s%i_structproj.png", fignm, figcount <- figcount + 1),
+  width = 10)
 
 #----- Death rate projections
 
@@ -377,90 +368,127 @@ ploteu / plotcntr + plot_layout(guides = "collect", design = design)
 ggsave(sprintf("figures/%s%i_DRproj.png", fignm, figcount <- figcount + 1), 
   height = 10)
 
-
-
-
-
-
 #-------------------------------
 # Section D: ERF extrapolation
 #-------------------------------
 
-#----- Ilustrative example
+#----- Show European level ERFs with extrapolation
 
-# Select coefficients for a city where RR is low in cold part
-citydecr <- "DE048C"
-coefex <- subset(coefs, URAU_CODE == citydecr)
+# Load data about second-stage meta-regression
+load("data/meta-model.RData")
 
-# Load observed and compute quantiles
-tsumobs <- read_parquet("data/era5series.gz.parquet") |>
+# Get design matrix for age only (because of factor expansion of region)
+mixterms <- delete.response(terms(stage2res))
+euages <- summarise(cityage, age = mean(age), .by = agegroup)
+agemm <- model.matrix(mixterms[grep("age", attr(mixterms, "term.labels"))],
+  euages)
+
+# Get meta coefficients and vcov for intercept and age
+allmetac <- coef(stage2res)
+ageinds <- grep("age|(Intercept)", names(allmetac))
+agemetac <- allmetac[ageinds]
+agemetav <- vcov(stage2res)[ageinds, ageinds]
+
+# Predict DLNM coefficients and vcov for all ages
+agepreds <- apply(agemm, 1, function(x){
+  xexp <- t(x) %x% diag(length(agemetac) / 2)
+  coefpred <- xexp %*% agemetac
+  vcovpred <- xexp %*% agemetav %*% t(xexp)
+  list(fit = coefpred, vcov = vcovpred)
+})
+
+# Get average European tmean distribution and associated basis
+tdist <- read_parquet("data/era5series.gz.parquet") |>
   subset(year(date) %between% histrange) |>
   reframe(perc = predper, obs = quantile(era5landtmean, predper / 100), 
-    .by = URAU_CODE)
-
-# Create bases for observed historical period
-tperh <- subset(tsumobs, URAU_CODE == citydecr, obs, drop = T)
-varknots <- tperh[predper %in% varper]
-varbound <- range(tperh)
+    .by = URAU_CODE) |>
+  summarise(tmean = mean(obs), .by = perc)
+varknots <- subset(tdist, perc %in% varper, tmean, drop = T)
+varbound <- range(tdist$tmean)
 argvar <- list(fun = varfun, degree = vardegree, knots = varknots,
   Bound = varbound)
-bperh <- suppressWarnings(do.call(onebasis, c(list(x = tperh), argvar)))
-ind <- predper %between% c(25, 99)
+ov_basis <- do.call(onebasis, c(list(x = tdist$tmean), argvar))
 
-# Create bases for projection period
-tperp <- open_dataset(sprintf("%s/tsum0.parquet", resdir)) |>
-  filter(period == "2095" & ssp == 3 & city == citydecr & 
-      gcm == "ACCESS_CM2") |>
-  select(perc, full) |>
-  collect()
-bperp <- suppressWarnings(do.call(onebasis, c(list(x = tperp$full), argvar)))
+# Find MMP
+firstpred <- ov_basis %*% sapply(agepreds, "[[", "fit")
+inrange <- predper >= 25 & predper <= 99
+agemmt <- tdist$tmean[inrange][apply(firstpred[inrange,], 2, which.min)]
 
-# Compute ERF for each age
-allrrs <- foreach(a = agelabs, .combine = rbind) %do% {
-  acoef <- subset(coefex, agegroup == a) |> select(starts_with("b"))
-  mmt <- tperh[ind][which.min(drop(bperh[ind,] %*% t(acoef)))]
-  cenvec <- do.call(onebasis, c(list(x = mmt), argvar))
-  bcenh <- scale(bperh, center = cenvec, scale = F) |> 
-    suppressWarnings()
-  bcenp <- scale(bperp, center = cenvec, scale = F) |> 
-    suppressWarnings()
-  erfh <- bcenh %*% t(acoef)
-  erfp <- bcenp %*% t(acoef)
-  ind2 <- tperp$full >= max(tperh)
-  rbind(
-    data.frame(agegroup = a, type = "hist", 
-      tper = tperh, rr = pmax(exp(drop(erfh)), 1)),
-    data.frame(agegroup = a, type = "proj", 
-      tper = tperp$full[tperp$full > max(tperh)], 
-      rr = exp(drop(erfp))[tperp$full > max(tperh)]),
-    data.frame(agegroup = a, type = "trunc", 
-      tper = tperh[erfh < 0], rr = exp(drop(erfh))[erfh < 0])
-  )
-}
+# Get list of ERFs on an expanded distribution (for illustration)
+agecp <- Map(crosspred, basis = list(ov_basis), 
+  coef = lapply(agepreds, "[[", "fit"), vcov = lapply(agepreds, "[[", "vcov"),
+  model.link = "log", cen = agemmt, at = 
+    list(seq(min(tdist$tmean) - 2, max(tdist$tmean) + 3, length.out = 100))) |>
+  suppressWarnings()
+names(agecp) <- agelabs
+ageerf <- lapply(agecp, 
+    function(x) x[c("predvar", "allRRfit", "allRRlow", "allRRhigh")] |>
+      as.data.frame()) |> 
+  rbindlist(idcol = "agegroup")
 
-# Plot ERFs
-ggplot(allrrs) +
+# Constrain >1 and projection part
+ageerf[, ":="(hist = predvar %between% range(tdist$tmean), 
+  allRRfit = pmax(allRRfit, 1), allRRlow = pmax(allRRlow))]
+
+# Plot
+ggplot(ageerf) +
   theme_classic() +
   theme(panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
     panel.border = element_rect(fill = NA), 
     panel.background = element_rect(fill = NA),
     axis.title = element_text(face = "bold")) +
+  geom_line(aes(x = predvar, y = allRRfit, col = agegroup), 
+    linewidth = 1, linetype = 3) +
+  geom_line(aes(x = predvar, y = allRRfit, col = agegroup), 
+    linewidth = 1, linetype = 1, data = ageerf[hist == TRUE,]) + 
   geom_hline(yintercept = 1) + 
-  geom_line(aes(x = tper, y = rr, alpha = type, linetype = type, 
-    col = agegroup), linewidth = 1) + 
   scale_colour_manual(values = agepal, name = "Age group") + 
-  scale_linetype_manual(name = "", values = c(hist = 1, proj = 3, trunc = 1),
-    labels = c(hist = "Observed", proj = "Extrapolated", trunc = "Truncated")) +
-  scale_alpha_manual(name = "", values = c(hist = 1, proj = 1, trunc = .3),
-    labels = c(hist = "Observed", proj = "Extrapolated", trunc = "Truncated")) +
+  scale_x_continuous(
+    breaks = subset(tdist, perc %in% c(1, 25, 50, 75, 99), tmean, drop = T),
+    labels = c(1, 25, 50, 75, 99)) +
+  labs(y = "RR", x = "Temperature percentile")
+
+# Save
+ggsave(sprintf("figures/%s%i_ERFextrapol.png", fignm, figcount <- figcount + 1),
+  height = 4, width = 6)
+
+
+#----- Adaptation
+
+# Select age to display and adaptation scenarios
+ageada <- "85+"
+adasc <- unique(adaptdf$heat)
+adammt <- agemmt[agelabs == ageada]
+
+# Select ERF and apply adaptation
+newnames <- sprintf("RR_%s", adasc)
+adaerf <- ageerf[agegroup == ageada,] 
+adaerf[,  (newnames) := lapply(adasc, function(x) ifelse(predvar > adammt, 
+  1 + (allRRfit - 1) * (1 - x / 100), allRRfit))]
+adaerf <- melt(adaerf, measure.vars = newnames, id.vars = "predvar", 
+  variable.name = "ada", value.name = "RR")
+
+# Plot ERFs
+ggplot(adaerf) +
+  theme_classic() +
+  theme(panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    axis.title = element_text(face = "bold")) +
+  geom_line(aes(x = predvar, y = RR, col = ada), linewidth = 1) +
+  geom_line(aes(x = predvar, y = RR), col = 1, linewidth = 1, 
+    data = adaerf[ada == "RR_0"]) +
+  geom_hline(yintercept = 1) + 
+  scale_colour_manual(values = "names<-"(adapal, sprintf("RR_%s", adasc)), 
+    name = "Risk attenuation", labels = unique(adaptdf$adapt)) + 
+  scale_x_continuous(
+    breaks = subset(tdist, perc %in% c(1, 25, 50, 75, 99), tmean, drop = T),
+    labels = c(1, 25, 50, 75, 99)) +
   labs(y = "RR", x = "Temperature")
 
 # Save
-ggsave(sprintf("figures/%s%i_ERFextrapol.png", fignm, figcount <- figcount + 1))
-
-
-
-
+ggsave(sprintf("figures/%s%i_ERFadapt.png", fignm, figcount <- figcount + 1),
+  height = 4, width = 6)
 
 #-------------------------------
 # Section E: Additional results
@@ -490,13 +518,14 @@ byan <- 1000
 ggplot(plotan) +
   theme_classic() + 
   theme(plot.margin = unit(c(1, 5, 1, 1), "line"), 
-    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.grid.major = element_line(colour = grey(.5), linewidth = .1),
     panel.border = element_rect(fill = NA), 
     strip.text = element_text(face = "bold"),
     axis.title = element_text(face = "bold"),
     strip.background = element_rect(colour = NA, fill = NA),
     legend.position = "bottom") + 
-  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
+  facet_grid(cols = vars(ssp), rows = vars(adapt), 
+    labeller = labeller(ssp = ssplabs)) + 
   labs(x = "", y = sprintf("Excess deaths (x%s)", 
     formatC(byan, format = "f", digits = 0, big.mark = ","))) + 
   coord_cartesian(clip = "off") + 
@@ -509,7 +538,7 @@ ggplot(plotan) +
 
 # Export
 ggsave(sprintf("figures/%s%i_TotalExcess.png", fignm, figcount <- figcount + 1), 
-  width = 12, height = 7)
+  width = 10, height = 10)
 
 
 #----- Results by age
@@ -528,17 +557,17 @@ ggplot(plotage) +
     strip.text = element_text(face = "bold"),
     axis.title = element_text(face = "bold"),
     strip.background = element_rect(colour = NA, fill = NA)) + 
-  facet_wrap(~ agegroup, scales = "free_y") + 
+  facet_wrap(~ adapt + agegroup, ncol = length(agelabs), scales = "free_y") + 
   labs(x = "Year", y = sprintf("Excess death rate (x%s)", 
     formatC(byrate, format = "f", digits = 0, big.mark = ","))) +
   geom_line(aes(x = period, y = rate_est * byrate, col = factor(ssp)),
-    size = 1.5) + 
+    size = .5) + 
   scale_color_manual(values = ssppal, name = "", labels = ssplabs) +
   geom_hline(yintercept = 0)
 
 # Save
 ggsave(sprintf("figures/%s%i_age.png", fignm, figcount <- figcount + 1), 
-  width = 10, height = 5)
+  width = 10, height = 7)
 
 #----- Result by GCM
 
@@ -554,27 +583,28 @@ plotgcm[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 ggplot(plotgcm) +
   theme_classic() + 
   theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
-    panel.grid.major = element_line(colour = grey(.9), linewidth = .01),
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .2),
     panel.border = element_rect(fill = NA), 
     panel.background = element_rect(fill = NA),
     strip.text = element_text(face = "bold"),
     axis.title = element_text(face = "bold"),
     strip.background = element_rect(colour = NA, fill = NA)) + 
   geom_hline(yintercept = 0) + 
-  facet_wrap(~ ssp, labeller = labeller(ssp = ssplabs)) + 
+  facet_grid(cols = vars(ssp), rows = vars(adapt), 
+    labeller = labeller(ssp = ssplabs)) + 
   labs(x = "Year", y = sprintf("Excess death rate (x%s)", 
     formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
   coord_cartesian(xlim = range(plotgcm$period), clip = "off") + 
   geom_line(aes(x = period, y = rate_est, col = gcm, linetype = gcm),
-    subset(plotgcm, gcm != "ens"), linewidth = 1) + 
+    subset(plotgcm, gcm != "ens"), linewidth = .5) + 
   geom_line(aes(x = period, y = rate_est), col = 1, show.legend = F,
-    subset(plotgcm, gcm == "ens"), linewidth = 1.5) +
+    subset(plotgcm, gcm == "ens"), linewidth = 1) +
   scale_color_manual(values = gcmpal, name = "") + 
   scale_linetype_manual(values = gcmlntp, name = "")
 
 # Save plot
 ggsave(sprintf("figures/%s%i_resultGCM.png", fignm, figcount <- figcount + 1), 
-  width = 10)
+  width = 10, height = 8)
 
 
 #----- Trends for countries and regions
@@ -600,8 +630,6 @@ plotreg[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
 # Data to display country on the right
 cntrlabs <- plotcntr[period == max(period) & ssp == 3,]
 
-#----- Build plot
-
 # Plot layout and theme
 figtrend_cntr <- ggplot(plotcntr) +
   theme_classic() +
@@ -612,7 +640,8 @@ figtrend_cntr <- ggplot(plotcntr) +
     axis.title = element_text(face = "bold"),
     strip.background = element_rect(colour = NA, fill = NA)) +
   geom_hline(yintercept = 0) +
-  facet_wrap(~ ssp, ncol = 1, labeller = labeller(ssp = ssplabs)) +
+  facet_grid(cols = vars(ssp), rows = vars(adapt), 
+    labeller = labeller(ssp = ssplabs), switch = "y") +
   labs(x = "", y = sprintf("Excess death rate (x%s)",
     formatC(byrate, format = "f", digits = 0, big.mark = ",")),
     color = "", fill = "") +
@@ -635,8 +664,70 @@ figtrend_cntr <- figtrend_cntr +
 
 # Save
 ggsave(sprintf("figures/%s%i_trendCountries.png", fignm, 
-  figcount <- figcount + 1), figtrend_cntr, height = 10, width = 7)
+  figcount <- figcount + 1), figtrend_cntr, height = 10, width = 10)
 
 
+#----- City level rates for each adaptation level
 
+# All age group and net effect
+adamap <- finalres$city_level[agegroup == "all" & sc == "clim" & 
+    ssp == 3 & range == "tot" & adapt != "0%", ]
 
+# Add geographical info
+adamap <- merge(adamap, cities[, c("URAU_CODE", "lon", "lat", "pop")],
+  by.x = "city", by.y = "URAU_CODE")
+
+# Multiply rates by the denominator
+ratevars <- grep("rate", colnames(adamap), value = T)
+adamap[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
+
+# Cut points for palette
+cutpts <- unique(sort(c(0, unname(round(
+  quantile(adamap$rate_est, seq(0, 1, length.out = 20)) / 5) * 5))))
+adamap[, colgrp := cut(rate_est, cutpts)]
+signtab <- table(factor(sign(cutpts), c(-1, 0, 1)))
+
+# Palettes (fill and border)
+npal <- (max(signtab)) * 2
+# pal <- scico(npal, palette = "bam", direction = -1)[
+#   (max(signtab) - signtab[1] + 1):(max(signtab) + signtab[3])]
+pal <- c(scico(npal, palette = "bam", direction = -1)[
+  max(signtab) - signtab[1] + seq_len(signtab[1])],
+  scico(tail(signtab, 1), palette = "acton", direction = -1))
+bpal <- rep(c("white", "black"), signtab[c("-1", "1")])
+names(pal) <- names(pal) <- levels(adamap$colgrp)
+
+# Theme and layout
+adamapfig <- ggplot(adamap) + theme_void() +
+  theme(legend.position = "bottom", legend.box = "vertical",
+    strip.text = element_text(hjust = 0.5, face = "bold", size = 14), 
+    title = element_text(hjust = 0, face = "bold", size = 12),
+    panel.border = element_rect(colour = 1, fill = NA)) +
+  facet_grid(rows = vars(level), cols = vars(adapt), 
+    labeller = labeller(level = levellabs), switch = "y")
+
+# European map layout
+adamapfig <- adamapfig + 
+  geom_sf(data = euromap, fill = grey(.9), col = "white", inherit.aes = F) +
+  coord_sf(xlim = range(adamap$lon), ylim = range(adamap$lat),
+    lims_method = "box", crs = st_crs(euromap), default_crs = st_crs(4326))
+
+# Add cities
+adamapfig <- adamapfig +
+  geom_point(aes(x = lon, y = lat, fill = colgrp, size = pop),
+    shape = 21, stroke = .5, col = "black", alpha = .8) +
+  scale_fill_manual(values = pal) +
+  scale_size(range = c(1, 10), breaks = c(0.1, 0.5, 3, 7.5) * 10^6,
+    labels = ~ number(./10^6)) +
+  labs(size = "Population (in millions)",
+    colour = sprintf("Excess death rate (x%s)", 
+      formatC(byrate, format = "f", digits = 0, big.mark = ",")), 
+    fill = sprintf("Excess death rate (x%s)", 
+      formatC(byrate, format = "f", digits = 0, big.mark = ","))) +
+  guides(size = guide_legend(override.aes = list(col = 1, fill = "darkgrey",
+      stroke = .5)),
+    fill = guide_bins(override.aes = list(size = 5), direction = "horizontal"))
+
+# Save plot
+ggsave(sprintf("figures/%s%i_mapsAdaptation.png", fignm, 
+  figcount <- figcount + 1), adamapfig, height = 20, width = 15)

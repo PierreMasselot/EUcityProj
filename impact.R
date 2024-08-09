@@ -77,48 +77,26 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
   perlen = 1, ensonly = T, warming_win = NULL)
 {
   
-  #----- Aggregate
-  
-  # Compute heat + cold
-  totres <- res[, 
-    .(death = death[1], pop = pop[1], full = sum(full), demo = sum(demo)), 
-    by = c("ssp", "gcm", "year", "res")]
-  res <- rbind(res, totres[, range := "tot"])
-  rm(totres)
-
-  # Compute the part due to climate change
-  res[, clim := full - demo]
-  
-  # Columns containing ANs
-  setnames(res, c("full", "demo", "clim"), 
-    sprintf("an_%s", c("full", "demo", "clim")))
-  ancols <- sprintf("an_%s", c("full", "demo", "clim"))
-  
   #----- Compute impact measures
   
   # Compute attributable fraction
   if ("af" %in% measures){
-    res[, gsub("an", "af", ancols) := lapply(.SD, "/", death), 
-      .SDcols = ancols]
+    res[, af := an / death]
   }
   
   # Compute deaths rates
   if ("rate" %in% measures){
-    res[, gsub("an", "rate", ancols) := lapply(.SD, "/", pop), 
-      .SDcols = ancols]
+    res[, rate := an / pop]
   }
   
   # Compute cumulative AN
   if ("cuman" %in% measures){
-    res[order(year), gsub("an", "cuman", ancols) := lapply(.SD, cumsum), 
-      by = c("gcm", "range", "ssp", "res"), .SDcols = ancols]
+    res[order(year), cuman := cumsum(an), 
+      by = c("gcm", "range", "sc", "agegroup", "res")]
   }
   
-  # Store measure columns
-  meascols <- c(outer(measures, c("full", "demo", "clim"), paste, sep = "_"))
-  
   # Fill ANs inheriting from null death rates
-  setnafill(res, fill = 0, cols = meascols)
+  setnafill(res, fill = 0, cols = measures)
   
   #----- Results by period
   
@@ -127,27 +105,28 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
   
   # Compute average between GCMs
   estres <- res[res == "est", lapply(.SD, mean, na.rm = T), 
-    by = c("period", "ssp", "range"), .SDcols = meascols]
+    by = c("period", "sc", "range", "agegroup"), 
+    .SDcols = measures]
   
   # Compute confidence intervals
   cires <- res[res != "est", 
     as.list(unlist(lapply(.SD, fquantile, c(.025, .975), na.rm = T))),
-    by = c("period", "ssp", "range"), .SDcols = meascols]
+    by = c("period", "sc", "range", "agegroup"), .SDcols = measures]
   
   # GCM specific aggregation
   if (!ensonly){
     estresgcm <- res[res == "est", lapply(.SD, mean, na.rm = T), 
-      by = c("period", "ssp", "range", "gcm"), .SDcols = meascols]
+      by = c("period", "sc", "range", "agegroup", "gcm"), 
+      .SDcols = measures]
     estres <- rbind(estres[, gcm := "ens"], estresgcm)
     ciresgcm <- res[res != "est", 
       as.list(unlist(lapply(.SD, fquantile, c(.025, .975), na.rm = T))),
-      by = c("period", "ssp", "range", "gcm"), .SDcols = meascols]
+      by = c("period", "sc", "range", "agegroup", "gcm"), .SDcols = measures]
     cires <- rbind(cires[, gcm := "ens"], ciresgcm)
     rm(estresgcm, ciresgcm)
   }
   
   # Rename
-  setnames(estres, meascols, sprintf("%s_est", meascols))
   names(cires) <- gsub("\\.97.*\\%", "_high", names(cires))
   names(cires) <- gsub("\\.2.*\\%", "_low", names(cires))
 
@@ -164,37 +143,40 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
 
     # Merge to warming level windows
     res <- merge(res, warming_win, 
-      by = c("gcm", "year", "ssp"), allow.cartesian = T)
+      by = c("gcm", "year"), allow.cartesian = T)
     
-    # Ensemble averages and confidence intervals by period
+    # Compute average between GCMs
     estres <- res[res == "est", lapply(.SD, mean, na.rm = T), 
-      by = c("level", "ssp", "range"), .SDcols = meascols]
+      by = c("level", "sc", "range", "agegroup"), 
+      .SDcols = measures]
+    
+    # Compute confidence intervals
     cires <- res[res != "est", 
       as.list(unlist(lapply(.SD, fquantile, c(.025, .975), na.rm = T))),
-      by = c("level", "ssp", "range"), .SDcols = meascols]
+      by = c("level", "sc", "range", "agegroup"), .SDcols = measures]
     
     # GCM specific aggregation
     if (!ensonly){
       estresgcm <- res[res == "est", lapply(.SD, mean, na.rm = T), 
-        by = c("level", "ssp", "range", "gcm"), .SDcols = meascols]
+        by = c("level", "sc", "range", "agegroup", "gcm"), 
+        .SDcols = measures]
       estres <- rbind(estres[, gcm := "ens"], estresgcm)
       ciresgcm <- res[res != "est", 
         as.list(unlist(lapply(.SD, fquantile, c(.025, .975), na.rm = T))),
-        by = c("level", "ssp", "range", "gcm"), .SDcols = meascols]
+        by = c("level", "sc", "range", "agegroup", "gcm"), .SDcols = measures]
       cires <- rbind(cires[, gcm := "ens"], ciresgcm)
       rm(estresgcm, ciresgcm)
     }
     
     # Rename
-    setnames(estres, meascols, sprintf("%s_est", meascols))
     names(cires) <- gsub("\\.97.*\\%", "_high", names(cires))
     names(cires) <- gsub("\\.2.*\\%", "_low", names(cires))
     
     # Merge estimates and CIs
     levelres <- merge(estres, cires)
-    rm(estres, cires)
+    rm(estres, cires); gc()
     
-    # return
+    # Prepare output
     out$level <- levelres
   }
   
@@ -204,3 +186,72 @@ impact <- function(res, measures = c("an", "af", "rate", "cuman"),
 }
 
 
+# Aggregate
+impact_aggregate <- function(res, agg, vars = "an", by = key(res)){
+  
+  # Loop on variables to aggregate
+  for (vi in names(agg)){
+    restot <- res[, lapply(.SD, sum), by = setdiff(by, vi), .SDcols = vars]
+    res <- rbind(res, restot[, (vi) := agg[vi]])
+  }
+  
+  # Export
+  res
+}
+
+
+# Assumes that the data.table has appropriate key set
+impact_measures <- function(res, vars = "an", 
+  measures = c("af", "rate", "cuman"), by = key(res))
+{
+
+  # Compute attributable fraction
+  if ("af" %in% measures){
+    res[, sprintf("af_%s", vars) := lapply(.SD, "/", death),
+      .SDcols = vars]
+  }
+  
+  # Compute deaths rates
+  if ("rate" %in% measures){
+    res[, sprintf("rate_%s", vars) := lapply(.SD, "/", pop),
+      .SDcols = vars]
+  }
+  
+  # Compute cumulative AN
+  if ("cuman" %in% measures){
+    res[, sprintf("cuman_%s", vars) := lapply(.SD, cumsum),
+      .SDcols = vars, by = setdiff(by, "year")]
+  }
+  
+  # Fill ANs inheriting from null death rates
+  newvars <- outer(measures, vars, paste, sep = "_") |> c()
+  setnafill(res, fill = 0, cols = newvars)
+  
+  # Return
+  res
+}
+
+
+impact_summarise <- function(res, vars = "an", by = key(res), prob = .95){
+  
+  # Compute point estimate
+  estres <- res[res == "est", lapply(.SD, mean, na.rm = T), 
+    by = by, .SDcols = vars]
+  
+  # Compute confidence intervals
+  alpha <- 1 - prob
+  lims <- c(alpha / 2, 1 - (alpha / 2))
+  cires <- res[res != "est", 
+    as.list(unlist(lapply(.SD, fquantile, lims, na.rm = T))),
+    by = by, .SDcols = vars]
+  
+  # Rename
+  setnames(estres, vars, sprintf("%s_est", vars))
+  names(cires) <- gsub(sprintf("\\.%s\\%%", lims[1] * 100), "_low", 
+    names(cires))
+  names(cires) <- gsub(sprintf("\\.%s\\%%", lims[2] * 100), "_high", 
+    names(cires))
+  
+  # Merge and return
+  merge(estres, cires)
+}
