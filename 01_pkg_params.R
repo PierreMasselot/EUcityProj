@@ -49,14 +49,14 @@ source("impact.R") # Functions to compute and combine impact summaries
 
 # NUMBER OF ITERATIONS IN THE MONTE-CARLO SIMULATIONS AND PARALLELIZATION CORES
 nsim <- 1000
-ncores <- pmax(detectCores() - 1, 1) |> pmin(15)
+ncores <- pmax(detectCores() - 1, 1) #|> pmin(13)
 
 # Size of groups of cities to parallelise
-grpsize <- 50
+grpsize <- 10
 
 # Directory for temporary saving (keep memory clear)
-tdir <- tempdir()
-# tdir <- "temp"
+# tdir <- tempdir() # WARNING: files can be deleted automatically after some time
+tdir <- "C:/Users/lshpm4/Documents/EUcityProj_run"
 
 #----- ANALYSIS
 
@@ -140,7 +140,7 @@ levelcol <- scico(length(targets) + 1, palette = "grayC", direction = -1)[-1]
 names(levellabs) <- names(levelcol) <- targets
 
 # Temperature range
-rnglabs <- c("cold" = "Cold", "heat" = "Heat", "tot" = "Total")
+rnglabs <- c("cold" = "Cold", "heat" = "Heat", "tot" = "Net effect")
 # rngpal <- c("tot" = 1, "cold" = 4, "heat" = 2)
 rngpal <- scico(n = 5, palette = "berlin")[c(1, 3, 4)] |> 
   "names<-"(c("cold", "tot", "heat"))

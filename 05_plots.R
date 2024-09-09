@@ -140,7 +140,8 @@ figforest <- ggplot(plotcntr) +
     axis.ticks.y = element_blank(),
     strip.text = element_markdown(face = "bold", size = 13),
     strip.background = element_rect(colour = NA, fill = NA),
-    axis.text.x.bottom = element_text(angle = -45, hjust = 0.5, vjust = 0.1)) + 
+    axis.text.x.bottom = element_text(angle = -45, hjust = 0.5, vjust = 0.1),
+    legend.position = "bottom", legend.direction = "horizontal") + 
   facet_grid(rows = vars(region), cols = vars(level), scales = "free_y", 
     space = "free_y", labeller = labeller(level = levellabs)) +
   geom_hline(aes(yintercept = id + .75), data = plotreg, linewidth = .01) + 
@@ -152,13 +153,14 @@ figforest <- ggplot(plotcntr) +
 figforest <- figforest + 
   geom_col(aes(y = id, x = rate_est, fill = range), orientation = "y",
     data = ~ subset(.x, range != "tot"), width = .8, alpha = .5) + 
-  scale_fill_manual(values = rngpal, labels = rnglabs, name = "") + 
+  scale_fill_manual(values = rngpal, labels = rnglabs, 
+    name = "Temperature range") + 
   scale_y_continuous(breaks = poslab$id, labels = poslab$cntr_name)
 
 # Add Net points
 figforest <- figforest + 
-  geom_pointrange(aes(y = id, x = rate_est, xmin = rate_low, xmax = rate_high),
-    size = .3, data = ~ subset(.x, range == "tot"))
+  geom_pointrange(aes(y = id, x = rate_est, xmin = rate_low, xmax = rate_high,
+    fill = range), size = .3, data = ~ subset(.x, range == "tot"))
 
 # Add region rates
 figforest <- figforest + 

@@ -102,7 +102,7 @@ outtab <- set_header_labels(outtab, values = as.list(c(
 # Add header row
 if(length(pertab) > 1) outtab <- add_header_row(outtab, 
   colwidth = c(1, rep(3, length(pertab) * length(ssptab))),
-  values = c("", pertab))
+  values = c("", sprintf("%i-%s", pertab, substr(pertab + perlen - 1, 3, 4))))
 if(length(ssptab) > 1) outtab <- add_header_row(outtab, 
   colwidth = c(1, rep(3, length(pertab) * length(ssptab))),
   values = c("", ssptab))

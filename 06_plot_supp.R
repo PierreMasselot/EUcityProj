@@ -491,7 +491,130 @@ ggsave(sprintf("figures/%s%i_ERFadapt.png", fignm, figcount <- figcount + 1),
   height = 4, width = 6)
 
 #-------------------------------
-# Section E: Additional results
+# Section E: Uncertainty
+#-------------------------------
+
+#----- Result by GCM
+
+# Select age groups and clim only scenario for european wide
+plotgcm <- finalres$eu_period[agegroup == "all" & sc == "clim" &
+    ssp %in% ssplist & range == "tot",]
+
+# Multiply rates by the denominator
+ratevars <- grep("rate", colnames(plotgcm), value = T)
+plotgcm[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
+
+# Build plot
+ggplot(plotgcm) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major = element_line(colour = grey(.9), linewidth = .2),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  geom_hline(yintercept = 0) + 
+  facet_grid(cols = vars(ssp), rows = vars(adapt), 
+    labeller = labeller(ssp = ssplabs)) + 
+  labs(x = "Year", y = sprintf("Excess death rate (x%s)", 
+    formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
+  coord_cartesian(xlim = range(plotgcm$period), clip = "off") + 
+  geom_line(aes(x = period, y = rate_est, col = gcm, linetype = gcm),
+    subset(plotgcm, gcm != "ens"), linewidth = .5) + 
+  geom_line(aes(x = period, y = rate_est), col = 1, show.legend = F,
+    subset(plotgcm, gcm == "ens"), linewidth = 1) +
+  scale_color_manual(values = gcmpal, name = "") + 
+  scale_linetype_manual(values = gcmlntp, name = "")
+
+# Save plot
+ggsave(sprintf("figures/%s%i_resultGCM.png", fignm, figcount <- figcount + 1), 
+  width = 10, height = 8)
+
+
+#----- Uncertainty decomposition
+
+# Compute interval between GCMs and add to the existing data
+ciexploresel <- finalres$eu_period[period == max(period) & adapt == "0%" &
+    range == "tot" & agegroup == "all" & sc == "clim",]
+betweenCI <- ciexploresel[gcm != "ens",
+  .(ciwidth = byrate * (quantile(rate_est, .975) - quantile(rate_est, .025))),
+  by = .(period, ssp)]
+withinCI <- ciexploresel[, ciwidth := byrate * (rate_high - rate_low)]
+CIdecomp <- rbind(betweenCI[, gcm := "Between"], 
+  withinCI[, .SD, .SDcols = colnames(betweenCI)])
+CIdecomp[, gcm := factor(gcm , levels = c("ens", "Between", gcmlist),
+  labels = c("Ensemble", "Between GCMs", gcmlist))]
+
+# Plot
+ggplot(CIdecomp) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major.y = element_line(colour = grey(.9), linewidth = .2),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA),
+    axis.text.x.bottom = element_text(angle = -45, hjust = 0, vjust = 1),
+    axis.ticks.x = element_blank()) + 
+  facet_grid(cols = vars(ssp), labeller = labeller(ssp = ssplabs)) + 
+  labs(x = "GCM", y = sprintf("CI width - Excess death rate (x%s)", 
+    formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
+  geom_col(aes(x = gcm, y = ciwidth, fill = gcm)) +
+  scale_fill_manual(values = c(gcmpal, ens = "black", Between = "black"), 
+    name = "", guide = "none")
+
+# Export
+ggsave(sprintf("figures/%s%i_CIwidth.png", fignm, figcount <- figcount + 1), 
+  width = 15)
+
+#----- Demographic variations
+
+# Sum population and deaths at European level
+eudemo <- projdata[, .(pop = sum(pop), death = sum(death)), 
+  by = .(ssp, year5)]
+eudemo[, dr := death / pop]
+
+# add info about warming level and compute uncertainty
+eudemo <- merge(eudemo, warming_win[gcm %in% gcmlist,])
+eudemo <- eudemo[, 
+  .(pop = mean(pop), dr = mean(dr),
+    pop_low = min(pop), pop_high = max(pop),
+    dr_low = min(dr), dr_high = max(dr),
+    ngcm = length(unique(gcm))),
+  by = .(ssp, level)]
+
+# Plot layout
+p <- ggplot(eudemo) +
+  theme_classic() + 
+  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
+    panel.grid.major.y = element_line(colour = grey(.9), linewidth = .2),
+    panel.border = element_rect(fill = NA), 
+    panel.background = element_rect(fill = NA),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.background = element_rect(colour = NA, fill = NA)) + 
+  facet_grid(cols = vars(ssp), labeller = labeller(ssp = ssplabs)) + 
+  labs(x = "Warming level (\u00B0C)") + 
+  scale_radius(range = c(.5, 2), name = "Number of GCMs")
+
+# Plot pop and DR
+ppop <- p + geom_pointrange(aes(x = level, y = pop / 1e6, ymin = pop_low / 1e6, 
+    ymax = pop_high / 1e6, size = ngcm)) + 
+  labs(y = "Population (millions)")
+pdr <- p + geom_pointrange(aes(x = level, y = dr, ymin = dr_low, 
+  ymax = dr_high, size = ngcm)) + 
+  labs(y = "Baseline death rate")
+
+# put together
+ppop / pdr + plot_layout(guides = "collect")
+
+# Export
+ggsave(sprintf("figures/%s%i_demoRange.png", fignm, figcount <- figcount + 1))
+
+#-------------------------------
+# Section F: Additional results
 #-------------------------------
 
 #----- Decomposition of AN
@@ -568,44 +691,6 @@ ggplot(plotage) +
 # Save
 ggsave(sprintf("figures/%s%i_age.png", fignm, figcount <- figcount + 1), 
   width = 10, height = 7)
-
-#----- Result by GCM
-
-# Select age groups and clim only scenario for european wide
-plotgcm <- finalres$eu_period[agegroup == "all" & sc == "clim" &
-    ssp %in% ssplist & range == "tot",]
-
-# Multiply rates by the denominator
-ratevars <- grep("rate", colnames(plotgcm), value = T)
-plotgcm[, (ratevars) := lapply(.SD, "*", byrate), .SDcols = ratevars]
-
-# Build plot
-ggplot(plotgcm) +
-  theme_classic() + 
-  theme(plot.margin = unit(c(1, 7, 1, 1), "line"), 
-    panel.grid.major = element_line(colour = grey(.9), linewidth = .2),
-    panel.border = element_rect(fill = NA), 
-    panel.background = element_rect(fill = NA),
-    strip.text = element_text(face = "bold"),
-    axis.title = element_text(face = "bold"),
-    strip.background = element_rect(colour = NA, fill = NA)) + 
-  geom_hline(yintercept = 0) + 
-  facet_grid(cols = vars(ssp), rows = vars(adapt), 
-    labeller = labeller(ssp = ssplabs)) + 
-  labs(x = "Year", y = sprintf("Excess death rate (x%s)", 
-    formatC(byrate, format = "f", digits = 0, big.mark = ","))) + 
-  coord_cartesian(xlim = range(plotgcm$period), clip = "off") + 
-  geom_line(aes(x = period, y = rate_est, col = gcm, linetype = gcm),
-    subset(plotgcm, gcm != "ens"), linewidth = .5) + 
-  geom_line(aes(x = period, y = rate_est), col = 1, show.legend = F,
-    subset(plotgcm, gcm == "ens"), linewidth = 1) +
-  scale_color_manual(values = gcmpal, name = "") + 
-  scale_linetype_manual(values = gcmlntp, name = "")
-
-# Save plot
-ggsave(sprintf("figures/%s%i_resultGCM.png", fignm, figcount <- figcount + 1), 
-  width = 10, height = 8)
-
 
 #----- Trends for countries and regions
 

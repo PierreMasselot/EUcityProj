@@ -42,9 +42,13 @@ st <- Sys.time()
 
 #----- Iterate on cities by chunks
 
+# Chunks to iterate on
+chunklist <- seq_len(max(cities$grp))
+# chunklist <- 8:max(cities$grp)
+
 # Loop across SSPs and chunks
 for (issp in ssplist) {
-for (igrp in seq_len(max(cities$grp))) {
+for (igrp in chunklist) {
   
   cat(as.character(Sys.time()), "Start looping through chunk", igrp, "\n", 
     file = "temp/attr.txt", append = T)
@@ -300,7 +304,7 @@ for (igrp in seq_len(max(cities$grp))) {
         tdir, city, issp, a)
       dir.create(idir, recursive = T)
       write_parquet(levelres, sprintf("%s/res.parquet", idir))
-      rm(resy)
+      rm(resy); gc()
     }
     
     # Export temp summary
@@ -562,7 +566,8 @@ for (igrp in seq_len(max(cities$grp))) {
   
   # Erase
   unlink(sprintf("%s/proj_loop/%s", tdir, allf[delf]), recursive = T)
-}}
+}
+}
 
 
 #-----------------------
@@ -686,10 +691,6 @@ lapply(names(finalres), function(nm) {
   write_parquet(finalres[[nm]], sprintf("%s/%s.parquet", resdir, nm))
 }) |> invisible()
 
-# Delete all created temporary files
-unlink(sprintf("%s/%s", tdir, c("proj_loop", "proj_reg")), recursive = T)
-unlink(dirlist, recursive = T)
-
 #----- Put together temperature summaries and copy to result
 
 # Read temperature summaries and write
@@ -702,4 +703,10 @@ list.files(sprintf("%s/proj_tsum", tdir), include.dirs = T, full.names = T) |>
 
 #----- The end
 
+# Delete all created temporary files
+unlink(sprintf("%s/%s", tdir, c("proj_loop", "proj_reg")), recursive = T)
+unlink(list.files(tdir, "proj_", include.dirs = T, full.names = T), 
+  recursive = T)
+
+# How much time?
 Sys.time() - st
