@@ -1,10 +1,15 @@
 ################################################################################
+# 
+# Contrasting future heat and cold-related mortality under climate change, 
+# demographic and adaptation scenarios in 854 European cities
 #
-# Proj-Adapt
-# Table(s)
+# R Code Part 4: Main Table of results
+#
+# Pierre Masselot & Antonio Gasparrini
 #
 ################################################################################
 
+# If the session has been ended before
 if (length(ls()) == 0){
   source("01_pkg_params.R")
   source("02_prep_data.R")
@@ -13,13 +18,15 @@ if (length(ls()) == 0){
   nmlist <- expand.grid(c("city", "country", "region", "eu"), 
       c("period", "level")) |>
     apply(1, paste, collapse = "_")
-  resdir <- "results/2024-08-06_100"
+  resdir <- "results_parquet"
   flist <- sprintf("%s/%s.parquet", resdir, nmlist)
   
   # Read all results
   finalres <- lapply(flist, read_parquet)
   names(finalres) <- nmlist
 }
+
+if (!dir.exists("figures")) dir.create("figures")
 
 #--------------------------
 # Table 1: Big table of rates
@@ -117,5 +124,5 @@ outtab <- autofit(outtab) |> fit_to_width(7)
 
 #----- Export
 
-save_as_docx(outtab, path = sprintf("figures/Tab1_%s.docx", tablab))
+save_as_docx(outtab, path = "figures/Tab1.docx")
 

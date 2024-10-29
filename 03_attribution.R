@@ -1,13 +1,15 @@
 ################################################################################
-# Attribution script
+# 
+# Contrasting future heat and cold-related mortality under climate change, 
+# demographic and adaptation scenarios in 854 European cities
+#
+# R Code Part 3: Perform health impact projections across cities
+#
+# Pierre Masselot & Antonio Gasparrini
+#
 ################################################################################
 
 #----- Prepare data
-
-# When testing
-# nsim <- 10
-# cities <- cities[sort(sample.int(nrow(cities), 15)),]
-# cities <- subset(cities, CNTR_CODE == "FI")
 
 # Initialise dates for temperature
 init_df <- data.table(date = dayvec)[,":="(
@@ -34,24 +36,22 @@ packs <- c("dlnm", "dplyr", "data.table", "doSNOW", "arrow", "collapse")
 libs <- .libPaths()
 
 # Initialize trace
-writeLines(c(""), "temp/attr.txt")
-cat(as.character(as.POSIXct(start <- Sys.time())),
-  file="temp/attr.txt", append=T)
-
-st <- Sys.time()
+dir.create(tdir, recursive = T)
+writeLines(c(""), sprintf("%s/trace.txt", tdir))
+cat(as.character(as.POSIXct(start <- Sys.time())), 
+  file = sprintf("%s/trace.txt", tdir), append = T)
 
 #----- Iterate on cities by chunks
 
 # Chunks to iterate on
 chunklist <- seq_len(max(cities$grp))
-# chunklist <- 8:max(cities$grp)
 
 # Loop across SSPs and chunks
 for (issp in ssplist) {
 for (igrp in chunklist) {
   
   cat(as.character(Sys.time()), "Start looping through chunk", igrp, "\n", 
-    file = "temp/attr.txt", append = T)
+    file = sprintf("%s/trace.txt", tdir), append = T)
   
   # Extract cities
   grpcities <- subset(cities, grp == igrp, URAU_CODE, drop = T)
@@ -68,8 +68,8 @@ for (igrp in chunklist) {
     .libPaths(libs)
     
     # Trace
-    cat(as.character(Sys.time()), as.character(city), as.character(issp), 
-      "\n", file = "temp/attr.txt", append = T) |> try()
+    cat(as.character(Sys.time()), as.character(city), as.character(issp), "\n", 
+      file = sprintf("%s/trace.txt", tdir), append = T) |> try()
     
     #----- Load projection data
     
@@ -377,7 +377,7 @@ for (igrp in chunklist) {
   #----- Country level
   
   cat(as.character(Sys.time()), "Aggregate country results for chunk", igrp, "\n", 
-    file = "temp/attr.txt", append = T)
+    file = sprintf("%s/trace.txt", tdir), append = T)
   
   # Extract represented countries
   grpcntr <- subset(cities, grp == igrp) |> 
@@ -385,7 +385,7 @@ for (igrp in chunklist) {
     left_join(countries, by = "CNTR_CODE") |>
     mutate(complete = lastgrp == lastcity)
   
-  # Prepare parallel
+  # Prepare parallel (replace with dopar below)
   # cl <- makeCluster(ncores)
   # registerDoParallel(cl)  
   
@@ -416,7 +416,7 @@ for (igrp in chunklist) {
       
       if (ada == subset(adaptdf, ssp == issp[1], adapt, drop = T)[1]) cat(
           as.character(Sys.time()), "Aggregate country", cntr$CNTR_CODE, "\n", 
-          file = "temp/attr.txt", append = T)
+          file = sprintf("%s/trace.txt", tdir), append = T)
       
       cntrres[, ":="(adapt = NULL)]
       
@@ -478,7 +478,7 @@ for (igrp in chunklist) {
   # Regions that are finalised in the current chunk
   grpregs <- subset(regions, chg == igrp, region, drop = T)
   
-  # Prepare parallel
+  # Prepare parallel (replace with dopar below)
   # cl <- makeCluster(ncores)
   # registerDoParallel(cl)  
   
@@ -490,7 +490,7 @@ for (igrp in chunklist) {
   
     if (ada == subset(adaptdf, ssp == issp[1], adapt, drop = T)[1]) cat(
           as.character(Sys.time()), "Aggregate region", reg, "\n", 
-          file = "temp/attr.txt", append = T)
+          file = sprintf("%s/trace.txt", tdir), append = T)
     
     # Extract relevant countries
     regcntr <- subset(countries, region %in% reg, CNTR_CODE, drop = T)
@@ -577,7 +577,7 @@ for (igrp in chunklist) {
 #----- Compute EU level results
 
 cat(as.character(Sys.time()), "Aggregate EU\n", 
-  file = "temp/attr.txt", append = T)
+  file = sprintf("%s/trace.txt", tdir), append = T)
 
 # Open dataset
 euds <- open_dataset(sprintf("%s/proj_reg", tdir), 
@@ -682,20 +682,26 @@ finalres <- lapply(finalres, function(x) x[, sc := sclist[sc]])
 
 #----- Save results
 
-# Results directory
-resdir <- sprintf("results/%s_%s", Sys.Date(), nsim)
-dir.create(resdir)
-
-# Export everything
+# Export everything in parquet (more efficient)
+dir.create("results_parquet")
 lapply(names(finalres), function(nm) {
-  write_parquet(finalres[[nm]], sprintf("%s/%s.parquet", resdir, nm))
+  write_parquet(finalres[[nm]], sprintf("results_parquet/%s.parquet", nm))
+}) |> invisible()
+
+# Export everything in csv (more readable)
+dir.create("results_csv")
+lapply(names(finalres), function(nm) {
+  write_csv_arrow(finalres[[nm]], sprintf("results_csv/%s.csv", nm))
 }) |> invisible()
 
 #----- Put together temperature summaries and copy to result
 
 # Read temperature summaries and write
 open_dataset(sprintf("%s/proj_tsum", tdir), partitioning = c("city", "ssp")) |>
-  write_dataset(resdir, basename_template = "tsum{i}.parquet")
+  write_dataset("results_parquet", basename_template = "tsum{i}.parquet")
+open_dataset(sprintf("%s/proj_tsum", tdir), partitioning = c("city", "ssp")) |>
+  write_csv_dataset("results_csv", basename_template = "tsum{i}.csv",
+    quote = "none")
 
 # Erase temporary files
 list.files(sprintf("%s/proj_tsum", tdir), include.dirs = T, full.names = T) |>
@@ -708,5 +714,6 @@ unlink(sprintf("%s/%s", tdir, c("proj_loop", "proj_reg")), recursive = T)
 unlink(list.files(tdir, "proj_", include.dirs = T, full.names = T), 
   recursive = T)
 
+
 # How much time?
-Sys.time() - st
+Sys.time() - start

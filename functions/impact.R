@@ -5,59 +5,6 @@
 ################################################################################
 
 #--------------------------------
-# Functions combining results between iterations
-#--------------------------------
-
-#----- Combining two successive ages within a city
-combres <- function(x1, x2){
-  
-  # Sum full results for geographical aggregation
-  fullres <- rbind(x1, x2)[, lapply(.SD, sum), 
-    by = .(year, range, gcm, ssp, res), 
-    .SDcols = c("pop", "death", "full", "demo")]
-  
-  # Return everything
-  fullres
-}
-
-#----- Computing impacts for a specific level
-finalcomb <- function(x, lev = NULL, lab = NULL, write = NULL, 
-  format = "parquet", ...)
-{
-  
-  # Compute impacts for this level
-  aggres <- impact(x$res, ...)
-
-  # Add label
-  if (!is.null(lab)){
-    aggres <- lapply(aggres, function(y) y[, (lev) := lab])
-  }
-
-  # Reorganise and return
-  names(aggres) <- sprintf("%s_%s", lev, names(aggres))
-  aggres <- c(x$aggres, aggres)
-  res <- list(res = x$res, aggres = aggres)
-  if (!is.null(write)) write_dataset(res$res, path = write, format = format)
-  res
-}
-
-#----- Aggregate all ages
-allages <- function(x, lev, lab, ...){
-  
-  # Compute impacts for this level
-  aggres <- impact(x, ...)
-  
-  # Output impact
-  lapply(names(aggres), function(nm){
-    dir.create(sprintf("%s/%s_%s/%s/all", tdir, lev, nm, lab), 
-      recursive = T)
-    write_parquet(aggres[[nm]], 
-      sprintf("%s/%s_%s/%s/all/impact.parquet", tdir, lev, nm, lab))
-  })
-}
-
-
-#--------------------------------
 # Compute impact measures and aggregate results
 #--------------------------------
 

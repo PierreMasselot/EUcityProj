@@ -1,5 +1,12 @@
 ################################################################################
-# NEW CODE FOR PROJECTIONS
+# 
+# Contrasting future heat and cold-related mortality under climate change, 
+# demographic and adaptation scenarios in 854 European cities
+#
+# R Code Part 1: Packages and analysis parameters
+#
+# Pierre Masselot & Antonio Gasparrini
+#
 ################################################################################
 
 #------------------------
@@ -38,8 +45,13 @@ library(ggtext) # To display degree symbols
 library(lemon) # For the pointpath geom
 
 #----- Custom functions
-source("isimip3.R") # ISIMIP3 bias-correction method
-source("impact.R") # Functions to compute and combine impact summaries
+source("functions/isimip3.R") # ISIMIP3 bias-correction method
+source("functions/impact.R") # Functions to compute and combine impact summaries
+
+#------------------------
+# Download data from Zenodo
+#------------------------
+
 
 #------------------------
 # PARAMETERS
@@ -47,62 +59,56 @@ source("impact.R") # Functions to compute and combine impact summaries
 
 #----- Computation
 
-# NUMBER OF ITERATIONS IN THE MONTE-CARLO SIMULATIONS AND PARALLELIZATION CORES
-nsim <- 1000
-ncores <- pmax(detectCores() - 1, 1) #|> pmin(13)
+# Number of simulations for the Monte-Carlo eCI and number of cores
+# Too many cores can result in insufficient memory allocated to each
+nsim <- 500
+ncores <- pmax(detectCores() - 1, 1) |> pmin(15)
 
 # Size of groups of cities to parallelise
 grpsize <- 10
 
 # Directory for temporary saving (keep memory clear)
 # tdir <- tempdir() # WARNING: files can be deleted automatically after some time
-tdir <- "C:/Users/lshpm4/Documents/EUcityProj_run"
+tdir <- "temp_results"
 
-#----- ANALYSIS
+#----- Analysis
 
-# AGE GROUPS (first and last define boundaries to exclude too young or too old)
+# Age groups (first and last define boundaries to exclude too young or too old)
 agebreaks <- c(20, 45, 65, 75, 85, Inf)
 agelabs <- gsub("-Inf", "+", 
   paste(agebreaks[-length(agebreaks)], agebreaks[-1] - 1, sep = "-"))
 
-# SPECIFICATION OF THE EXPOSURE FUNCTION
+# Specification of the exposure-response function (follows Masselot et al 2023 Lancet Plan. Health)
 varfun <- "bs"
 vardegree <- 2
 varper <- c(10, 75, 90)
 vardf <- vardegree + length(varper)
 
-# TEMPERATURE PERCENTILES
+# Temperature percentiles
 predper <- c(seq(0, 1, 0.1), 2:98, seq(99, 100, 0.1))
 
-# DENOMINATOR FOR RATES
+# Denominator for excess death rates
 byrate <- 10^5
 
 # Length of period of reporting (in years)
 perlen <- 5
 
-# WEIGHTS EUROPEAN STANDARD POPULATION 2013 (ONLY 20+)
-# NB: SEE V:\VolumeQ\AGteam\ONS\standardization
-espbreaks <- (seq_along(esp2013) - 1) * 5
-espgrps <- cut(espbreaks, agebreaks, right = F, labels = agelabs)
-stdweight<- tapply(esp2013, espgrps, sum)
+#----- Series and labels
 
-#----- SERIES AND LABELS
-
-# DEFINE RANGE PERIODS - projrange is split by calibration period
-projrange <- c(2015, seq(2030, 2100, by = 10))
+# Define historical, projections and calibration periods
 histrange <- c(2000, 2014)
+projrange <- c(2015, seq(2030, 2100, by = 10))
 
-# DAY SEQUENCES
-# NB: REMOVE LEAP DAYS FROM PROJECTION PERIOD
+# Day sequences (NB Leap Days removed)
 totrange <- range(c(histrange, projrange))
 dayvec <- seq(as.Date(paste(totrange[1], 01, 01, sep = "-")),
   as.Date(paste(totrange[2] - 1, 12, 31, sep = "-")), by = 1)
 dayvec <- dayvec[month(dayvec) != 2 | mday(dayvec) != 29]
 
-# Regions
+# Region ordering
 ordreg <- c("Northern", "Western", "Eastern", "Southern")
 
-#----- CLIMATE MODELS AND SCENARIOS
+#----- Climate models and scenarios
 
 # SSP Scenarios
 ssplist <- 1:3
@@ -141,15 +147,12 @@ names(levellabs) <- names(levelcol) <- targets
 
 # Temperature range
 rnglabs <- c("cold" = "Cold", "heat" = "Heat", "tot" = "Net effect")
-# rngpal <- c("tot" = 1, "cold" = 4, "heat" = 2)
 rngpal <- scico(n = 5, palette = "berlin")[c(1, 3, 4)] |> 
   "names<-"(c("cold", "tot", "heat"))
-# rngalpha <- c("tot" = 1, "cold" = .4, "heat" = .4)
 
 # Geography
 cntrpal <- viridis(30)
 regpal <- viridis(length(ordreg))
-# regpal <- scico(length(unique(cities$region)), palette = "batlow")
 names(regpal) <- ordreg
 
 # Age

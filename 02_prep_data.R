@@ -1,10 +1,16 @@
 ################################################################################
-# NEW CODE FOR PROJECTIONS
+# 
+# Contrasting future heat and cold-related mortality under climate change, 
+# demographic and adaptation scenarios in 854 European cities
+#
+# R Code Part 2: Load and prepare data
+#
+# Pierre Masselot & Antonio Gasparrini
+#
 ################################################################################
-
-################################################################################
+#------------------------
 # LOAD EUcityTRM info
-################################################################################
+#------------------------
 
 # read coefficients 
 coefs <- read.csv("data/coefs.csv") |>
@@ -29,9 +35,9 @@ cities <- mutate(cities, region = factor(region, levels = ordreg),
     CNTR_CODE = factor(CNTR_CODE, levels = countries$CNTR_CODE)) |>
   arrange(region, CNTR_CODE, URAU_CODE)
 
-################################################################################
+#------------------------
 # LOAD DEMOGRAPHIC DATA
-################################################################################
+#------------------------
 
 #----- Load Wittgenstein projections
 
@@ -97,29 +103,30 @@ projdata[, ":="(pop = wittpop * popfac, death = wittdeath * dfac)]
 
 #----- Some further data cleaning
 
-# SELECT SSP. Discard the duplicates of historical period
+# Select SSP. Discard the duplicates of historical period
 projdata <- projdata[ssp %in% ssplist,]
 projdata[, ssp := as.character(ssp)]
 projdata[year5 %between% histrange, ssp := "hist"]
 projdata <- unique(projdata)
 
-# SELECT CITIES WITH FULL DATA 
+# Select cities with full data
 cities <- subset(cities, URAU_CODE %in% projdata$URAU_CODE)
 projdata <- subset(projdata, URAU_CODE %in% cities$URAU_CODE)
 
-# DEFINE FACTORS WITH PROPER ORDER, ROW NAMES
+# Define factors with nice names
 cities <- mutate(cities, 
   across(URAU_CODE:cntr_name, ~ factor(.x, levels = unique(.x))),
   region = factor(region, levels = ordreg))
 
-# ORDER DEMOGRAPHIC DATA
+# Order demographic data
 projdata[, ":="(URAU_CODE = factor(URAU_CODE, levels = levels(cities$URAU_CODE)),
   agegroup = factor(agegroup, levels = agelabs))]
 setkey(projdata, ssp, URAU_CODE, agegroup)
 
 
-################################################################################
+#------------------------
 # Load warming target data
+#------------------------
 
 # Read data
 warming_years <- read.csv("data/warming_years.csv", check.names = F)
@@ -145,8 +152,9 @@ warming_win <- group_by(warming_years, gcm, level, ssp) |>
   mutate(year5 = floor(year / 5) * 5) |> 
   data.table()
 
-################################################################################
-# Final tidying
+#------------------------
+# Other data
+#------------------------
 
 # Load European map data
-euromap <- gisco_get_countries(year = "2020", cache_dir = "temp/euromap")
+euromap <- gisco_get_countries(year = "2020", cache_dir = "data")

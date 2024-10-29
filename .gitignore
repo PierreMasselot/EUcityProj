@@ -5,9 +5,10 @@ JRC*/
 plots/
 figures/
 data/
-results/
+results*/
 D4.4/
 appendices/
+*.zip
 
 # History files
 .Rhistory
