@@ -22,6 +22,7 @@ library(arrow) # To deal with datasets that cannot be loaded all at once
 library(stringr) # Deal with strings
 library(sf) # For mapping
 library(openxlsx) # To export data in excel
+library(zen4R) # To download input data
 
 #----- Statistical analysis
 library(dlnm); library(splines) # Create bases for RR computation
@@ -52,6 +53,18 @@ source("functions/impact.R") # Functions to compute and combine impact summaries
 # Download data from Zenodo
 #------------------------
 
+# Download if nonexistent
+if (!dir.exists("data")){
+  dir.create("data")
+  
+  # Download the data from the repo. timeout has been increased for large files
+  download_zenodo("10.5281/zenodo.14004321", path = "data", timeout = 10000,
+    files = "data.zip")
+  
+  # Unzip data and delete zipfile
+  unzip("data/data.zip")
+  unlink("data/data.zip")
+}
 
 #------------------------
 # PARAMETERS
