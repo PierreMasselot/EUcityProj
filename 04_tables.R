@@ -14,6 +14,19 @@ if (length(ls()) == 0){
   source("01_pkg_params.R")
   source("02_prep_data.R")
   
+  # Download if nonexistent
+  if (!dir.exists("results_parquet")){
+    dir.create("results_parquet")
+    
+    # Download the data from the repo. timeout has been increased for large files
+    download_zenodo("10.5281/zenodo.14004321", path = "results_parquet",
+      files = "results_parquet.zip", timeout = 10000)
+    
+    # Unzip data and delete zipfile
+    unzip("results_parquet/results_parquet.zip")
+    unlink("results_parquet/results_parquet.zip")
+  }
+  
   # Read
   nmlist <- expand.grid(c("city", "country", "region", "eu"), 
       c("period", "level")) |>
