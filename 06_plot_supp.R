@@ -36,7 +36,7 @@ ggplot(plotage) +
   geom_hline(yintercept = 0)
 
 # Save
-ggsave("figures/ExtendedFig1.pdf", width = 11, height = 8)
+ggsave("figures/ExtendedFig1.eps", width = 11, height = 8)
 
 
 #-------------------------------
@@ -101,7 +101,8 @@ adamapfig <- adamapfig +
     fill = guide_bins(override.aes = list(size = 5), direction = "horizontal"))
 
 # Save plot
-ggsave("figures/ExtendedFig2.pdf", adamapfig, height = 20, width = 15)
+ggsave("figures/ExtendedFig2.jpg", adamapfig, height = 20, width = 15, 
+  dpi = 600)
 
 
 #-------------------------------
@@ -137,7 +138,7 @@ ggplot(taveeu) +
   scale_linetype_manual(values = gcmlntp, name = "GCM")
 
 # Save plot
-ggsave("figures/ExtendedFig3.pdf", height = 7.5, width = 14)
+ggsave("figures/ExtendedFig3.eps", height = 7.5, width = 14)
 
 #-------------------------------
 # Extended Data Figure 4: RMSE calibration
@@ -184,7 +185,7 @@ ggplot(tcalib) +
   labs(x = "", y = "RMSE", fill = "")
 
 # Save
-ggsave("figures/ExtendedFig4.pdf", width = 10, height = 7.5)
+ggsave("figures/ExtendedFig4.eps", width = 10, height = 7.5)
 
 
 #-------------------------------
@@ -274,7 +275,7 @@ plotstruct <- ggplot(eustruct) +
 #----- Put together
 
 (plotpop + plotdr) / plotstruct + plot_layout(guides = "collect")
-ggsave("figures/ExtendedFig5.pdf", width = 12, height = 9)
+ggsave("figures/ExtendedFig5.eps", width = 12, height = 9)
 
 
 #-------------------------------
@@ -403,7 +404,7 @@ plotadapt <- ggplot(adaerf) +
 plotextrapol + plotadapt
 
 # Save
-ggsave("figures/ExtendedFig6.pdf", height = 7.5, width = 17)
+ggsave("figures/ExtendedFig6.eps", height = 7.5, width = 17)
 
 
 #-------------------------------
@@ -451,4 +452,4 @@ ggplot(plotan) +
   geom_hline(yintercept = 0)
 
 # Export
-ggsave("figures/ExtendedFig7.pdf", width = 10, height = 10)
+ggsave("figures/ExtendedFig7.eps", width = 10, height = 10)

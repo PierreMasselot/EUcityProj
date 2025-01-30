@@ -4,7 +4,9 @@
 
 Fully replicable code performing the health impact projections reported in the paper
 
-[citation]
+> Masselot, P., Mistry, M.N., Rao, S. *et al*. Estimating future heat-related and cold-related mortality under climate change, demographic and adaptation scenarios in 854 European cities. *Nat Med* (2025). [https://doi.org/10.1038/s41591-024-03452-2](https://doi.org/10.1038/s41591-024-03452-2)
+
+Results from the paper can be explroed interactively in a dedicated [Shiny app](https://ehm-lab.shinyapps.io/vistemphip/).
 
 > [!WARNING]
 > Reproducing the full results in extremely intensive computationally and memory wise. It is recommended to test the scripts on a reduced number of cities, and with a reduced number of simulations (see the `nsim` parameter). Also consider changing the parameters `ncores` and `grpsize` that also control the speed and memory efficiency of the analysis. See script `01_pkg_params.R`
