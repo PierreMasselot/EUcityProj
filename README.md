@@ -1,8 +1,8 @@
-# EUcityProj
+# Climate change health projections under demographic and adaptation scenarios
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14004322.svg)](https://doi.org/10.5281/zenodo.14004322)
 
-Fully replicable code performing the health impact projections reported in the paper
+Fully replicable code performing the health impact projections reported in the paper:
 
 > Masselot, P., Mistry, M.N., Rao, S. *et al*. Estimating future heat-related and cold-related mortality under climate change, demographic and adaptation scenarios in 854 European cities. *Nat Med* (2025). [https://doi.org/10.1038/s41591-024-03452-2](https://doi.org/10.1038/s41591-024-03452-2)
 
